@@ -1,7 +1,7 @@
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {readFile} from 'node:fs/promises'
-const component=await readFile(new URL('../src/App.vue',import.meta.url),'utf8')
+const component=await readFile(new URL('../src/CalendarApp.vue',import.meta.url),'utf8')
 const script=component.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm,'')
 function setup({response,error,confirmError}={}) {
   let callbacks, toggles=0,cancels=0,confirms=0,requests=0

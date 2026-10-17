@@ -21,3 +21,6 @@ def health():
 
 from app.commands.router import router as commands_router
 app.include_router(commands_router,prefix="/api")
+
+from app.todos.router import router as todos_router
+app.include_router(todos_router,prefix="/api")

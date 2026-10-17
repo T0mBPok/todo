@@ -3,6 +3,7 @@ from app.core.database import Base, engine
 from app.tasks.models import Task
 from app.recurrences.models import RecurrenceException
 from app.plans.models import Plan
+from app.todos.models import Todo
 from app.commands.models import Command
 
 with engine.connect() as connection:

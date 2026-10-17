@@ -157,6 +157,7 @@ class CommandService:
         calendar_lock(self.session)
         command=self.dao.locked(command_id)
         if not command: raise HTTPException(404,'Команда не найдена.')
+        if any(op.get('entity')=='todo' for op in command.operations):raise HTTPException(404,'Это команда списка задач.')
         if command.status=='executed': return command.result
         if len(data.choices)!=len(command.operations): raise HTTPException(422,'Выберите задачу для каждого действия.')
         results=[];deleted_series=set()
