@@ -1,0 +1,9 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "ToDo: запуск Docker", "type": "shell", "command": "bash scripts/compose.sh up --build -d", "problemMatcher": [] },
+    { "label": "ToDo: логи", "type": "shell", "command": "bash scripts/compose.sh logs -f", "problemMatcher": [] },
+    { "label": "ToDo: тесты backend", "type": "shell", "command": "bash scripts/compose.sh exec -T backend python -m pytest -q", "problemMatcher": [] },
+    { "label": "ToDo: остановка", "type": "shell", "command": "bash scripts/compose.sh down", "problemMatcher": [] }
+  ]
+}
