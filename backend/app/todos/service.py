@@ -17,7 +17,7 @@ class TodoService:
         task=self.dao.add(data);self.session.commit();return task
     def update(self,id,data):
         calendar_lock(self.session);task=self.require(id)
-        for k,v in data.model_dump().items():setattr(task,k,v)
+        for k,v in data.model_dump(exclude_unset=True).items():setattr(task,k,v)
         self.session.commit();return task
     def delete(self,id):
         calendar_lock(self.session);self.session.delete(self.require(id));self.session.commit()
@@ -41,7 +41,7 @@ class TodoService:
                 if action.ref not in mapping:raise HTTPException(502,'Модель выбрала задачу вне списка. Ничего не изменено.')
                 if action.ref in seen:raise HTTPException(422,'Несколько изменений одной задачи: уточните итоговый результат.')
                 seen.add(action.ref);snapshot=TodoRead.model_validate(mapping[action.ref]).model_dump(mode='json')
-                if action.action=='update' and action.title is None and action.description is None:raise HTTPException(422,'Уточните, что изменить в задаче.')
+                if action.action=='update' and action.title is None and action.description is None and action.category is None:raise HTTPException(422,'Уточните, что изменить в задаче.')
             operations.append({'entity':'todo','action':action.model_dump(),'snapshot':snapshot})
         note=re.sub(r'\bT\d+\b',lambda match:'«'+mapping[match.group()].title+'»' if match.group() in mapping else '',result.note)
         command=Command(text=data.text,status='draft',operations=operations,note=note)
@@ -56,7 +56,7 @@ class TodoService:
         try:
             for op in command.operations:
                 action=op['action'];snapshot=op['snapshot']
-                if action['action']=='create':task=self.dao.add(TodoInput(title=action['title'],description=action['description'] or ''))
+                if action['action']=='create':task=self.dao.add(TodoInput(title=action['title'],description=action['description'] or '',category=action.get('category') or 'important_not_urgent'))
                 else:
                     task=self.require(UUID(snapshot['id']))
                     if TodoRead.model_validate(task).model_dump(mode='json')!=snapshot:raise HTTPException(409,'Задача уже изменилась. Повторите команду.')
@@ -66,6 +66,7 @@ class TodoService:
                     if action['action']=='update':
                         if action['title'] is not None:task.title=TodoInput(title=action['title']).title
                         if action['description'] is not None:task.description=action['description']
+                        if action.get('category') is not None:task.category=action['category']
                 changed.append(TodoRead.model_validate(task).model_dump(mode='json'))
             result={'note':'Готово. Список задач обновлён.','tasks':changed}
             command.status='executed';command.result=result;self.session.commit();return result

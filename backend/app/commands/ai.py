@@ -1,3 +1,4 @@
+from app.core.ai_client import ai_post
 import httpx
 import re
 from datetime import datetime
@@ -22,6 +23,8 @@ nearest=true если ближайшая. target='' для этой/неё, ес
 Пример: перенеси завтра тренировку на 19 -> target=тренировка,date_reference=завтра,new_time=19:00,new_date_reference=null.
 Пример: добавь в описание встречи взять документы -> update,target=встреча,description=Взять документы,append_description=true.
 """
+    from app.core.priority import PRIORITY_RULES
+    prompt+=PRIORITY_RULES+' Для изменения категории используй new_category; без просьбы изменить категорию new_category=null.'
     schema=Interpretation.model_json_schema()
     management=bool(re.search(r'\b(?:удали\w*|удалить|перенес\w*|перенос\w*|измени\w*|переимен\w*|отмени\w*|сдвин\w*|замени\w*)\b|(?:добав\w*|запиш\w*|допол\w*).*?(?:в описание|к описанию|описание)',request.text,re.I))
     management=management or (conversion_requested(request.text) and bool(re.search(r"уже|существующ|которые|чтобы они|чтоб они|эти|эту|её|ее",request.text,re.I)))
@@ -30,7 +33,7 @@ nearest=true если ближайшая. target='' для этой/неё, ес
         schema['properties']['operations']['minItems']=1
         prompt+='\nЭто команда изменения существующих событий: intent=manage. Обязательно извлеки хотя бы одну операцию.'
     try:
-        response=httpx.post(config.OLLAMA_BASE_URL+'/api/chat',timeout=120,json={'model':config.OLLAMA_MODEL,'stream':False,'think':False,'keep_alive':'10m','format':schema,'options':{'temperature':0,'num_ctx':8192,'num_predict':2200},'messages':[{'role':'system','content':prompt},{'role':'user','content':request.text}]})
+        response=ai_post(config.OLLAMA_BASE_URL+'/api/chat',timeout=120,json={'model':config.OLLAMA_MODEL,'stream':False,'think':False,'keep_alive':'10m','format':schema,'options':{'temperature':0,'num_ctx':8192,'num_predict':2200},'messages':[{'role':'system','content':prompt},{'role':'user','content':request.text}]})
         response.raise_for_status()
         parsed=Interpretation.model_validate_json(response.json()['message']['content'])
         for op in parsed.operations:

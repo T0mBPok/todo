@@ -1,6 +1,6 @@
 from datetime import datetime
 from uuid import UUID, uuid4
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, false
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from app.core.database import Base
@@ -8,6 +8,8 @@ from app.core.database import Base
 class Task(Base):
     __tablename__ = 'tasks'
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    category: Mapped[str] = mapped_column(Text, default='important_not_urgent', server_default='important_not_urgent')
+    is_fixed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     title: Mapped[str] = mapped_column(String(200))
     start: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     end: Mapped[datetime] = mapped_column(DateTime(timezone=True))

@@ -1,6 +1,6 @@
 from datetime import datetime,timedelta,timezone
 from zoneinfo import ZoneInfo
-from uuid import UUID
+from uuid import UUID,uuid4
 import re
 from sqlalchemy import select
 from fastapi import HTTPException
@@ -76,11 +76,25 @@ class CommandService:
                 instruction=Operation(operation=action.action,target=candidates[0].title,**changes)
                 operations.append({'instruction':instruction.model_dump(),'timezone':request.timezone,'candidates':[task.model_dump(mode='json') for task in candidates],
                     'requires_confirmation':action.selection=='all' or bool(decision.keep_refs)})
+        if decision.new_events:
+            from app.plans.dates import enforce_date_context
+            additions=enforce_date_context(decision.new_events,request.text,request.timezone)
+            for event in additions:
+                if not re.search(r'\b(?:час\w*|минут\w*|полчаса|полтора|полторы|до)\b',request.text,re.I):event.end=event.start+timedelta(hours=1)
+                snapshot=TaskRead(id=uuid4(),**event.model_dump())
+                instruction=Operation(operation='create',target=event.title,scope='occurrence')
+                operations.append({'instruction':instruction.model_dump(),'timezone':request.timezone,'candidates':[snapshot.model_dump(mode='json')],'requires_confirmation':True})
+            # A mixed replacement must be reviewed as one indivisible change.
+            for item in operations:item['requires_confirmation']=True
         if not operations or len(operations)>30:raise HTTPException(422,'Уточните количество изменяемых событий.')
         if sum(item['instruction']['operation']=='delete' for item in operations)>1:
             for item in operations:item['requires_confirmation']=True
         kept=[mapping[ref].title for ref in decision.keep_refs]
         note=re.sub(r'\(?\bE\d+\b\)?','',decision.note)+(' Сохранить: '+', '.join(dict.fromkeys(kept))+'.' if kept else '')
+        if decision.new_events:
+            removed=[item['instruction']['target'] for item in operations if item['instruction']['operation']=='delete']
+            additions=[item['candidates'][0] for item in operations if item['instruction']['operation']=='create']
+            note='План замены. '+('Удалить: '+', '.join(removed)+'. ' if removed else '')+'Добавить: '+ '; '.join(value['title']+' '+datetime.fromisoformat(value['start']).astimezone(ZoneInfo(request.timezone)).strftime('%d.%m %H:%M') for value in additions)+'. Подтвердите все действия вместе.'
         command=Command(text=request.text,operations=operations,note=note)
         self.session.add(command);self.session.commit()
         return {'kind':'command','id':command.id,'operations':operations,'note':note}
@@ -157,19 +171,27 @@ class CommandService:
         calendar_lock(self.session)
         command=self.dao.locked(command_id)
         if not command: raise HTTPException(404,'Команда не найдена.')
-        if any(op.get('entity')=='todo' for op in command.operations):raise HTTPException(404,'Это команда списка задач.')
+        if any(op.get('entity') in {'todo','balance'} for op in command.operations):raise HTTPException(404,'Используйте соответствующий раздел для этой команды.')
         if command.status=='executed': return command.result
         if len(data.choices)!=len(command.operations): raise HTTPException(422,'Выберите задачу для каждого действия.')
         results=[];deleted_series=set()
         try:
-            for operation,choice in zip(command.operations,data.choices):
+            # Delete before insert/update so replacement can reuse the released interval.
+            ordered=sorted(zip(command.operations,data.choices),key=lambda pair: {'delete':0,'update':1,'create':2}[pair[0]['instruction']['operation']])
+            for operation,choice in ordered:
                 if choice.candidate>=len(operation['candidates']): raise HTTPException(422,'Неверный вариант.')
                 snapshot=TaskRead.model_validate(operation['candidates'][choice.candidate]);op=operation['instruction']
+                if op['operation']=='create':
+                    creation=TaskInput(**{key:getattr(snapshot,key) for key in TaskInput.model_fields})
+                    self.tasks.validate([creation])
+                    created=self.tasks.dao.add(creation);self.session.flush()
+                    results.append(TaskRead.model_validate(created).model_dump(mode='json'))
+                    continue
                 requested_scope=choice.scope or (op['scope'] if op['scope']!='unspecified' else None)
                 root_id=snapshot.series_parent_id or snapshot.id
                 if op['operation']=='delete' and requested_scope=='series' and root_id in deleted_series:continue
                 task=self.tasks.require(snapshot.id)
-                if task.title!=snapshot.title or task.description!=snapshot.description or task.recurrence!=(snapshot.recurrence.model_dump() if snapshot.recurrence else None):
+                if task.category!=snapshot.category or task.title!=snapshot.title or task.description!=snapshot.description or task.recurrence!=(snapshot.recurrence.model_dump() if snapshot.recurrence else None):
                     raise HTTPException(409,'Задача уже изменилась. Повторите команду.')
                 if not task.recurrence and (task.start!=snapshot.start or task.end!=snapshot.end): raise HTTPException(409,'Время задачи уже изменилось. Повторите команду.')
                 if task.recurrence:
@@ -191,7 +213,7 @@ class CommandService:
                     description=task.description
                     if op['description'] is not None:
                         description=(description+'\n'+op['description']).strip() if op['append_description'] else op['description']
-                    changes=TaskInput(title=op['new_title'] or task.title,description=description,start=start,end=start+duration,recurrence=({"frequency":op["new_recurrence"],"timezone":operation["timezone"]} if op.get("new_recurrence") else task.recurrence))
+                    changes=TaskInput(category=op.get('new_category') or task.category,title=op['new_title'] or task.title,description=description,start=start,end=start+duration,recurrence=({"frequency":op["new_recurrence"],"timezone":operation["timezone"]} if op.get("new_recurrence") else task.recurrence))
                     updated=self.tasks.update(task.id,changes,scope,snapshot.occurrence_start,commit_changes=False)
                     results.append(TaskRead.model_validate(updated).model_dump(mode='json'))
             result={'kind':'executed','note':'Готово. Календарь обновлён.','tasks':results}

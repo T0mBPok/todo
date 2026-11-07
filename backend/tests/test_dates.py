@@ -22,3 +22,32 @@ def test_single_anchor_and_overnight_duration():
     t=TaskInput(title='Ночная работа',start='2026-10-19T23:00:00+07:00',end='2026-10-20T01:00:00+07:00')
     enforce_date_context([t],'В воскресенье ночью работа','Asia/Tomsk',NOW)
     assert t.start.day==18 and t.end.day==19
+
+
+import pytest
+from fastapi import HTTPException
+from zoneinfo import ZoneInfo
+
+@pytest.mark.parametrize('phrase', ['В среду 28-го стартап Сейсмон', 'В среду, 28 октября стартап Сейсмон', 'В среду 28 стартап Сейсмон'])
+def test_explicit_day_beats_nearest_weekday(phrase):
+    t=task('Стартап Сейсмон','2026-10-21T11:00:00+07:00')
+    enforce_date_context([t],phrase,'Asia/Tomsk',datetime.fromisoformat('2026-10-20T22:00:00+07:00'))
+    assert t.start.astimezone(ZoneInfo('Asia/Tomsk')).date().isoformat()=='2026-10-28'
+    assert t.start.astimezone(ZoneInfo('Asia/Tomsk')).hour==11
+    assert (t.end-t.start).total_seconds()==3600
+
+def test_weekday_time_is_not_day_number():
+    t=task('Встреча','2026-10-28T11:00:00+07:00')
+    enforce_date_context([t],'В среду в 11:00 встреча','Asia/Tomsk',NOW)
+    assert t.start.day==21
+
+def test_conflicting_weekday_requires_clarification():
+    t=task('Встреча','2026-10-21T11:00:00+07:00')
+    with pytest.raises(HTTPException) as error:
+        enforce_date_context([t],'В среду 29 октября встреча','Asia/Tomsk',NOW)
+    assert error.value.status_code==422
+
+def test_explicit_day_with_multiple_events():
+    tasks=[task('Сейсмон','2026-10-21T11:00:00+07:00'),task('Волейбол','2026-10-25T11:00:00+07:00')]
+    enforce_date_context(tasks,'В среду 28-го Сейсмон. В воскресенье волейбол.','Asia/Tomsk',NOW)
+    assert [t.start.day for t in tasks]==[28,18]

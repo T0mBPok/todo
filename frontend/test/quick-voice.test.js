@@ -7,7 +7,7 @@ function setup({response,error,confirmError}={}) {
   let callbacks, toggles=0,cancels=0,confirms=0,requests=0
   const ref=value=>({value}), computed=get=>({get value(){return get()}})
   const hook={supported:true,listening:ref(false),processing:ref(false),starting:ref(false),audioUrl:ref(''),rawTranscript:ref(''),engineName:ref(''),elapsed:ref(0),recordSeconds:ref(0),toggle:async()=>{toggles++;hook.listening.value=!hook.listening.value},cancel:()=>{cancels++;hook.listening.value=false}}
-  const deps={ref,computed,watch:()=>{},nextTick:async()=>{},onMounted:()=>{},window:{innerWidth:1280},
+  const deps={defineProps:()=>({refreshToken:0}),ref,computed,watch:()=>{},nextTick:async()=>{},onMounted:()=>{},window:{innerWidth:1280},
     useVoiceInput:options=>{callbacks=options;return hook},
     request:async path=>{requests++;if(error)throw Error(error);return path.endsWith('/execute')?{note:'Готово',tasks:[]}:response},
     listTasks:async()=>[],visibleRange:()=>({}),localDate:value=>new Date(value).toISOString().slice(0,16),
@@ -58,4 +58,14 @@ test('bulk deletion waits for explicit confirmation even with auto save',async()
   assert.equal(s.status().requests,1)
   await s.finish('подтверждаю')
   assert.equal(s.status().requests,2);assert.equal(s.app.command.value,null)
+})
+
+test('mixed replacement retains both additions and waits for confirmation',async()=>{
+  const operations=['delete','delete','create','create'].map((operation,index)=>({requires_confirmation:true,instruction:{operation,scope:'occurrence'},candidates:[{id:String(index),title:'Действие '+index,start:'2026-10-28T07:00:00Z'}]}))
+  const s=setup({response:{kind:'command',id:'replacement',note:'Проверить четыре действия',operations}})
+  await s.app.quickMic();await s.finish('Убери пару и прототип, вместо них хакатон в 14 и баскетбол в 19')
+  assert.equal(s.app.command.value.operations.length,4)
+  assert.equal(s.app.command.value.operations.at(-1).instruction.operation,'create')
+  assert.equal(s.status().requests,1);assert.equal(s.app.voiceOpen.value,true)
+  await s.finish('подтверждаю');assert.equal(s.status().requests,2)
 })

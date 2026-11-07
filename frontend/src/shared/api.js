@@ -13,5 +13,5 @@ export function localDate(value) {
   return new Date(date - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
 }
 export function taskPayload(task) {
-  return { title: task.title, description: task.description || "", start: new Date(task.start).toISOString(), end: new Date(task.end).toISOString(), recurrence: task.recurrence || (['daily','weekly'].includes(task.repeat) ? {frequency:task.repeat,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone} : null) }
+  return { is_fixed: !!task.is_fixed, category: task.category || 'important_not_urgent', title: task.title, description: task.description || "", start: new Date(task.start).toISOString(), end: new Date(task.end).toISOString(), recurrence: task.recurrence || (['daily','weekly'].includes(task.repeat) ? {frequency:task.repeat,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone} : null) }
 }

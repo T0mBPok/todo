@@ -1,3 +1,4 @@
+from app.core.ai_client import ai_post
 import json
 import re
 from collections import Counter
@@ -24,7 +25,7 @@ class AIPlanner:
         original = normalize_transcript(text)
         schema = {'type':'object', 'properties':{'text':{'type':'string'}, 'note':{'type':'string'}},
                   'required':['text','note'], 'additionalProperties':False}
-        response = httpx.post(config.OLLAMA_BASE_URL + '/api/chat', timeout=120,
+        response = ai_post(config.OLLAMA_BASE_URL + '/api/chat', timeout=120,
             json={'model':config.OLLAMA_MODEL, 'stream':False, 'think':False, 'keep_alive':'10m',
                   'format':schema, 'options':{'temperature':0,'num_ctx':8192,'num_predict':1800},
                   'messages':[{'role':'system','content':normalization_prompt()}, {'role':'user','content':original}]})
@@ -38,7 +39,8 @@ class AIPlanner:
             return original, ''
         # A language correction must never silently change explicit numeric times.
         times = lambda value: Counter(re.findall(r'(?<!\d)\d{1,2}:\d{2}(?!\d)', value))
-        if times(original) - times(normalized):
+        numbers = lambda value: Counter(re.findall(r'\d+', value))
+        if times(original) - times(normalized) or numbers(original) != numbers(normalized):
             return original, ''
         details=re.search(r'(?:в\s+описании|описание(?:\s+задачи)?|детали)\s*[:—-]\s*(.+)',original,re.I|re.S)
         if details and details.group(1).strip().lower() not in normalized.lower():
@@ -47,10 +49,15 @@ class AIPlanner:
 
     def generate(self, request, existing):
         schema = ExtractedPlan.model_json_schema()
+        schema['$defs']['TaskInput'].setdefault('required',[]).append('category')
         instructions = planning_prompt(request.timezone, existing, schema)
         try:
-            normalized, corrections = self.normalize(request.text)
-            response = httpx.post(config.OLLAMA_BASE_URL + '/api/chat', timeout=120,
+            if config.AI_PROVIDER == 'openrouter':
+                normalized = normalize_transcript(request.text)
+                instructions += '\nИсправляй очевидные оговорки при извлечении событий и сохраняй исходные даты, время и детали.'
+            else:
+                normalized, _ = self.normalize(request.text)
+            response = ai_post(config.OLLAMA_BASE_URL + '/api/chat', timeout=120,
                 json={'model': config.OLLAMA_MODEL, 'stream': False, 'think': False,
                       'keep_alive': '10m', 'format': schema,
                       'options': {'temperature': 0, 'num_ctx': 8192, 'num_predict': 3000},
@@ -67,7 +74,7 @@ class AIPlanner:
             detail=re.search(r'(?:в\s+описании|описание(?:\s+задачи)?|детали)\s*[:—-]\s*(.+)',request.text,re.I|re.S)
             if len(parsed.tasks)==1 and detail:
                 parsed.tasks[0].description=detail.group(1).strip()[:5000]
-            parsed.tasks = enforce_date_context(parsed.tasks, normalized, request.timezone)
+            parsed.tasks = enforce_date_context(parsed.tasks, request.text, request.timezone)
             # The small model can copy example durations. Apply the documented
             # default in code when the user supplied no duration or end time.
             duration_mentioned = re.search(r'\b(?:час\w*|минут\w*|секунд\w*|полчаса|полтора|полторы|до)\b', request.text, re.IGNORECASE)
@@ -110,6 +117,8 @@ class AIPlanner:
             raise HTTPException(502, 'Qwen вернула некорректный план. Уточните запрос.') from error
 
 def model_status():
+    if config.AI_PROVIDER=='dashscope':return bool(config.DASHSCOPE_API_KEY and config.DASHSCOPE_MODEL)
+    if config.AI_PROVIDER=='openrouter':return bool(config.OPENROUTER_API_KEY and config.OPENROUTER_MODEL)
     try:
         response = httpx.get(config.OLLAMA_BASE_URL + '/api/tags', timeout=2)
         response.raise_for_status()

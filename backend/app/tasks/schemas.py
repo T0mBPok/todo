@@ -3,7 +3,10 @@ from uuid import UUID
 from app.recurrences.schemas import RecurrenceRule
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator, field_validator
 
+from app.core.priority import Category
 class TaskInput(BaseModel):
+    is_fixed: bool = False
+    category: Category = 'important_not_urgent'
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(default='', max_length=5000)

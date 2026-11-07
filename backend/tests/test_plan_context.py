@@ -49,9 +49,22 @@ def test_normalizer_passes_correction_to_planning(monkeypatch):
             content={'tasks':[{'title':'Волейбол','start':'2026-10-18T11:00:00+07:00','end':'2026-10-18T12:00:00+07:00'}], 'note':'Понял', 'needs_clarification':False}
         return httpx.Response(200,request=httpx.Request('POST',url),json={'message':{'content':json.dumps(content)}})
     monkeypatch.setattr(httpx,'post',fake_post)
+    import app.plans.ai as ai_module
+    from app.plans.dates import enforce_date_context
+    monkeypatch.setattr(ai_module, 'enforce_date_context', lambda tasks,text,zone: enforce_date_context(tasks,text,zone,datetime.fromisoformat('2026-10-16T21:00:00+07:00')))
     result=AIPlanner().generate(PlanRequest(text='В воскресенье в либол в 11:00'),[])
     assert result.tasks[0].title=='Волейбол'
     assert 'Волейбол: 18.10 11:00–12:00' in result.note
 
 def test_asr_short_minute_is_padded():
     assert normalize_transcript('Волейбол в 11:0, баскетбол в 13:12.') == 'Волейбол в 11:00, баскетбол в 13:12.'
+
+
+def test_normalizer_cannot_drop_explicit_day(monkeypatch):
+    import json
+    import httpx
+    from app.plans.ai import AIPlanner
+    def fake_post(url, **kwargs):
+        return httpx.Response(200,request=httpx.Request('POST',url),json={'message':{'content':json.dumps({'text':'В среду Сейсмон в 11:00','note':''})}})
+    monkeypatch.setattr(httpx,'post',fake_post)
+    assert AIPlanner().normalize('В среду 28-го Сейсмон в 11:00')[0]=='В среду 28-го Сейсмон в 11:00'

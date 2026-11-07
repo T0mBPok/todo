@@ -26,7 +26,7 @@ def calendar_context(request,service):
             series.append({'id':str(task.id),'title':task.title,'description':task.description,'anchor':task.start.astimezone(zone).isoformat(),'recurrence':task.recurrence})
             pairs=set(pair for start,end in windows for pair in instances(task,start,end,exceptions.get(task.id,set())))
         else:
-            relevant=not explicit_windows or task.id==request.context_task_id or any(task.start<end and task.end>start for start,end in windows)
+            relevant=not explicit_windows or any(task.start<end and task.end>start for start,end in windows)
             pairs={(task.start,task.end)} if relevant else set()
         for start,end in sorted(pairs):
             value=TaskRead.model_validate(task);value.start=start;value.end=end

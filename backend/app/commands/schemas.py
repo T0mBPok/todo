@@ -11,8 +11,10 @@ class CommandRequest(PlanRequest):
     history: list[HistoryItem]=Field(default_factory=list,max_length=8)
     context_task_id: UUID|None=None
     context_occurrence_start: AwareDatetime|None=None
+from app.core.priority import Category
 class Operation(BaseModel):
-    operation: Literal['update','delete']
+    new_category: Category|None=None
+    operation: Literal['create','update','delete']
     target: str
     date_reference: str|None=None
     time_reference: str|None=None

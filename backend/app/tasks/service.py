@@ -71,6 +71,10 @@ class TaskService:
     def update(self,task_id,data,scope=None,occurrence_start=None,commit_changes=True):
         calendar_lock(self.session)
         task=self.require(task_id)
+        if 'is_fixed' not in data.model_fields_set:
+            data.is_fixed=task.is_fixed
+        if 'category' not in data.model_fields_set:
+            data.category=task.category
         try:
             if task.recurrence or task.series_parent_id:
                 if scope not in ('occurrence','series'):
@@ -94,7 +98,7 @@ class TaskService:
                     old_anchor=root.start
                     delta=data.start.astimezone(zone).replace(tzinfo=None)-selected.astimezone(zone).replace(tzinfo=None)
                     new_anchor=(root.start.astimezone(zone).replace(tzinfo=None)+delta).replace(tzinfo=zone).astimezone(timezone.utc)
-                    changes=TaskInput(title=data.title,description=data.description,start=new_anchor,
+                    changes=TaskInput(is_fixed=data.is_fixed,category=data.category,title=data.title,description=data.description,start=new_anchor,
                         end=new_anchor+(data.end-data.start),recurrence=data.recurrence or root.recurrence)
                     excluded=self.recurrences.exceptions().get(root.id,set())
                     self.recurrences.clear(root.id)
@@ -109,7 +113,7 @@ class TaskService:
                     # Keep renamed descriptions in detached occurrences coherent;
                     # their explicitly moved times remain individual exceptions.
                     for child in self.session.scalars(select(Task).where(Task.series_parent_id==root.id)):
-                        child.title=data.title;child.description=data.description
+                        child.is_fixed=data.is_fixed;child.title=data.title;child.description=data.description;child.category=data.category
                     changed=root
                 else:
                     self.validate([data],ignore=task.id)

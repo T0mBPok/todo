@@ -31,6 +31,13 @@ services:
       DB_NAME: ${POSTGRES_DB:-todo}
       DB_USER: ${POSTGRES_USER:-todo}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-todo_local_change_me}
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      DASHSCOPE_MODEL: ${DASHSCOPE_MODEL:-qwen3.7-plus}
+      DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-nvidia/nemotron-3.5-super-vl:free}
+      OPENROUTER_RESPONSE_FORMAT: ${OPENROUTER_RESPONSE_FORMAT:-json_object}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:4b}
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
