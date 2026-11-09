@@ -191,7 +191,7 @@ class CommandService:
                 root_id=snapshot.series_parent_id or snapshot.id
                 if op['operation']=='delete' and requested_scope=='series' and root_id in deleted_series:continue
                 task=self.tasks.require(snapshot.id)
-                if task.category!=snapshot.category or task.title!=snapshot.title or task.description!=snapshot.description or task.recurrence!=(snapshot.recurrence.model_dump() if snapshot.recurrence else None):
+                if task.category!=snapshot.category or task.title!=snapshot.title or task.description!=snapshot.description or task.recurrence!=(snapshot.recurrence.model_dump(exclude_none=True) if snapshot.recurrence else None):
                     raise HTTPException(409,'Задача уже изменилась. Повторите команду.')
                 if not task.recurrence and (task.start!=snapshot.start or task.end!=snapshot.end): raise HTTPException(409,'Время задачи уже изменилось. Повторите команду.')
                 if task.recurrence:
@@ -213,7 +213,12 @@ class CommandService:
                     description=task.description
                     if op['description'] is not None:
                         description=(description+'\n'+op['description']).strip() if op['append_description'] else op['description']
-                    changes=TaskInput(category=op.get('new_category') or task.category,title=op['new_title'] or task.title,description=description,start=start,end=start+duration,recurrence=({"frequency":op["new_recurrence"],"timezone":operation["timezone"]} if op.get("new_recurrence") else task.recurrence))
+                    recurrence = task.recurrence
+                    if recurrence and recurrence.get('frequency') == 'google':
+                        recurrence = None
+                    if op.get('new_recurrence'):
+                        recurrence = {'frequency': op['new_recurrence'], 'timezone': operation['timezone']}
+                    changes=TaskInput(category=op.get('new_category') or task.category,title=op['new_title'] or task.title,description=description,start=start,end=start+duration,recurrence=recurrence)
                     updated=self.tasks.update(task.id,changes,scope,snapshot.occurrence_start,commit_changes=False)
                     results.append(TaskRead.model_validate(updated).model_dump(mode='json'))
             result={'kind':'executed','note':'Готово. Календарь обновлён.','tasks':results}

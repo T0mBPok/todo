@@ -2,8 +2,8 @@ from datetime import datetime,timezone
 from uuid import UUID,uuid4
 from sqlalchemy import Text,DateTime,Boolean
 from sqlalchemy.orm import Mapped,mapped_column
-from app.core.database import Base
-class Todo(Base):
+from app.core.database import Base, Owned
+class Todo(Owned, Base):
     __tablename__='todos'
     id: Mapped[UUID]=mapped_column(primary_key=True,default=uuid4)
     category: Mapped[str] = mapped_column(Text, default='important_not_urgent', server_default='important_not_urgent')

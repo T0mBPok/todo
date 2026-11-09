@@ -2,8 +2,8 @@ from uuid import UUID,uuid4
 from sqlalchemy import String,Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped,mapped_column
-from app.core.database import Base
-class Command(Base):
+from app.core.database import Base, Owned
+class Command(Owned, Base):
     __tablename__='commands'
     id: Mapped[UUID]=mapped_column(primary_key=True,default=uuid4)
     text: Mapped[str]=mapped_column(Text)

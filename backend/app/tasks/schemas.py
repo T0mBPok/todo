@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from uuid import UUID
-from app.recurrences.schemas import RecurrenceRule
+from app.recurrences.schemas import GoogleRecurrenceRule, RecurrenceRule
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator, field_validator
 
 from app.core.priority import Category
@@ -23,13 +23,15 @@ class TaskInput(BaseModel):
     def valid_interval(self):
         if self.end <= self.start:
             raise ValueError('Окончание должно быть позже начала')
-        if self.recurrence and (self.end-self.start).total_seconds()>86400:
+        if isinstance(self.recurrence, RecurrenceRule) and (self.end-self.start).total_seconds()>86400:
             raise ValueError('Повторяющееся событие должно длиться не более 24 часов')
         return self
 
 class TaskRead(TaskInput):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
+    is_all_day: bool = False
+    recurrence: RecurrenceRule | GoogleRecurrenceRule | None = None
     plan_id: UUID | None = None
     occurrence_start: AwareDatetime | None = None
     occurrence_id: str | None = None

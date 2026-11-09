@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { dateKey, fromKey, weekStart, monthDays, moveDate, eventsOnDay, eventPosition } from '../src/shared/calendar.js'
+import { dateKey, fromKey, weekStart, monthDays, moveDate, eventsOnDay, eventPosition, positionedEvents } from '../src/shared/calendar.js'
 test('weeks start Monday and cross year boundary',()=>{
   assert.equal(dateKey(weekStart(fromKey('2026-10-18'))),'2026-10-12')
   assert.equal(moveDate('2026-12-29',1,'week'),'2027-01-05')
@@ -28,4 +28,18 @@ test('manual recurrence control creates or clears the rule',()=>{
   const task={title:'Спорт',start:'2026-10-20T18:00',end:'2026-10-20T19:00'}
   assert.equal(taskPayload({...task,repeat:'weekly'}).recurrence.frequency,'weekly')
   assert.equal(taskPayload({...task,repeat:'none'}).recurrence,null)
+})
+
+test('all-day events stay on their calendar dates', () => {
+  const event = {is_all_day: true, start: '2026-10-17T00:00:00Z', end: '2026-10-19T00:00:00Z'}
+  assert.deepEqual(eventsOnDay([event], '2026-10-16'), [])
+  assert.deepEqual(eventsOnDay([event], '2026-10-17'), [event])
+  assert.deepEqual(eventsOnDay([event], '2026-10-18'), [event])
+  assert.deepEqual(eventsOnDay([event], '2026-10-19'), [])
+})
+test('overlapping timed events use separate columns', () => {
+  const event = (start, end) => ({start: '2026-10-17T' + start, end: '2026-10-17T' + end})
+  const cards = positionedEvents([event('09:00', '10:00'), event('09:30', '11:00'), event('11:00', '12:00')], '2026-10-17')
+  assert.notEqual(cards[0].style.left, cards[1].style.left)
+  assert.equal(cards[2].style.left, undefined)
 })

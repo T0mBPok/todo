@@ -16,14 +16,14 @@ class BalanceService:
         zone=ZoneInfo(request.timezone);now=datetime.now(zone)
         start=datetime.combine(request.day,datetime.min.time(),zone);end=start+timedelta(days=request.horizon_days+request.scan_days)
         if end<=now:raise HTTPException(422,'Выберите текущий или будущий день.')
-        events=self.tasks.list(start,end)
+        events=[event for event in self.tasks.list(start,end) if not event.is_all_day]
         source=[event for event in events if request.day<=event.start.astimezone(zone).date()<request.day+timedelta(days=request.scan_days) and event.start>now]
         loads=load_by_day(events,request.model_copy(update={'horizon_days':request.horizon_days+request.scan_days-1}))
         if len(source)>60:raise HTTPException(422,'В выбранном дне больше 60 событий. Сначала уточните расписание вручную.')
         if not source:return {'id':None,'summary':'В выбранном дне нет предстоящих событий с указанным временем. Задачи без времени остаются в списке дел.','proposals':[],'load':loads,'assessments':[]}
         mapping={f'E{i+1}':event for i,event in enumerate(source)};slots={};source_values=[]
         for ref,event in mapping.items():
-            pinned=event.is_fixed or event.id in request.pinned_ids or event.category=='important_urgent' or bool(re.search(r'университет|универе|экзамен|лекци|^пара(?:\s|$)',event.title,re.I))
+            pinned=event.is_fixed or (event.recurrence and event.recurrence.frequency=='google') or event.id in request.pinned_ids or event.category=='important_urgent' or bool(re.search(r'университет|универе|экзамен|лекци|^пара(?:\s|$)',event.title,re.I))
             source_values.append({'ref':ref,'title':event.title,'description':event.description,'category':event.category,'start':event.start.astimezone(zone).isoformat(),'end':event.end.astimezone(zone).isoformat(),'recurrence':event.recurrence.model_dump() if event.recurrence else None,'pinned':pinned})
             if not pinned:
                 for slot_start,slot_end in free_slots(event,events,request.model_copy(update={'day':event.start.astimezone(zone).date()}),now):
@@ -97,14 +97,14 @@ class BalanceService:
                 new_start=datetime.fromisoformat(proposal['new_start']);new_end=datetime.fromisoformat(proposal['new_end'])
                 if new_start<=datetime.now(ZoneInfo('UTC')):raise HTTPException(409,'Предложенное время уже прошло. Запустите анализ заново.')
                 gap=timedelta(minutes=proposal['gap_minutes'])
-                others=[event for event in self.tasks.list(new_start-gap,new_end+gap) if not (event.id==snapshot.id and event.start==snapshot.start)]
+                others=[event for event in self.tasks.list(new_start-gap,new_end+gap) if not event.is_all_day and not (event.id==snapshot.id and event.start==snapshot.start)]
                 if not fits(new_start,new_end,others,gap):raise HTTPException(409,'Предложенное время уже занято или не оставляет нужного перерыва. Запустите анализ заново.')
                 from app.balance.schemas import BalanceRequest
                 check=BalanceRequest(day=snapshot.start.astimezone(ZoneInfo(proposal.get('timezone','Asia/Tomsk'))).date(),timezone=proposal.get('timezone','Asia/Tomsk'),gap_minutes=proposal['gap_minutes'])
                 zone=ZoneInfo(check.timezone)
                 begin=datetime.combine(check.day,datetime.min.time(),zone)
                 finish=datetime.combine(new_start.astimezone(zone).date()+timedelta(days=1),datetime.min.time(),zone)
-                if move_benefit(current,new_start,new_end,self.tasks.list(begin,finish),check) is None:raise HTTPException(409,'Расписание изменилось: перенос больше не даёт заметного улучшения. Обновите предложения.')
+                if move_benefit(current,new_start,new_end,[event for event in self.tasks.list(begin,finish) if not event.is_all_day],check) is None:raise HTTPException(409,'Расписание изменилось: перенос больше не даёт заметного улучшения. Обновите предложения.')
                 payload=TaskInput(category=snapshot.category,title=snapshot.title,description=snapshot.description,start=new_start,end=new_end,recurrence=snapshot.recurrence)
                 task=self.tasks.update(snapshot.id,payload,scope='occurrence' if snapshot.recurrence or snapshot.series_parent_id else None,occurrence_start=snapshot.occurrence_start,commit_changes=False)
                 changed.append(TaskRead.model_validate(task).model_dump(mode='json'))

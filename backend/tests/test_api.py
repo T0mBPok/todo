@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.main import app
 from app.core.database import engine, get_session, Base
 from app.core import config
+from app.users.router import require_user
 from app.plans.ai import AIPlanner
 from app.plans.models import Plan
 from app.plans.schemas import PlanOutput, PlanRequest
@@ -25,7 +26,8 @@ def client():
         connection.execute(sql_text("ALTER TABLE tasks ADD CONSTRAINT tasks_no_overlap EXCLUDE USING gist (tstzrange(start, \"end\", '[)') WITH &&) WHERE (recurrence IS NULL)"))
         with Session(bind=connection, join_transaction_mode='create_savepoint', expire_on_commit=False) as session:
             app.dependency_overrides[get_session] = lambda: session
-            with TestClient(app) as client:
+            app.dependency_overrides[require_user] = lambda: None
+            with TestClient(app, headers={'Origin': config.PUBLIC_ORIGIN}) as client:
                 yield client, session
             app.dependency_overrides.clear()
         transaction.rollback()

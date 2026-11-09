@@ -202,3 +202,5 @@ API:
 задачи; удаление показывает подтверждение. Новая запись заменяет прежнюю команду.
 API списка: /api/todos; разбор голоса: /api/todos/commands/prepare,
 выполнение: /api/todos/commands/{id}/execute. Данные хранятся в PostgreSQL, миграция 0004.
+
+Настройка аккаунтов, обмена с Google и публичного сервера описана в [SECURITY_AND_GOOGLE.md](SECURITY_AND_GOOGLE.md).

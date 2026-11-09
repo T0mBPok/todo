@@ -5,7 +5,11 @@ export async function request(path, method = 'GET', body) {
   })
   if (response.status === 204) return null
   const result = await response.json()
-  if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : 'Проверьте название, даты и время задач.')
+  if (!response.ok) {
+    const error = new Error(typeof result.detail === 'string' ? result.detail : 'Проверьте введённые данные.')
+    error.status = response.status
+    throw error
+  }
   return result
 }
 export function localDate(value) {

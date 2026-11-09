@@ -8,10 +8,10 @@ import logging
 import numpy as np
 import soundfile as sf
 import torch
-import gigaam
 from fastapi import FastAPI, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 from audio import split_audio, SAMPLE_RATE
+from gigaam_model import load_gigaam
 
 torch.set_num_threads(4)
 model=None
@@ -19,7 +19,7 @@ lock=Lock()
 
 def load():
     global model
-    model=gigaam.load_model('v3_e2e_ctc', download_root='/models/gigaam', device='cpu', use_flash=False)
+    model=load_gigaam()
 
 @asynccontextmanager
 async def lifespan(app):

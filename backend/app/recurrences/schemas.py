@@ -15,3 +15,11 @@ class RecurrenceRule(BaseModel):
         except (ZoneInfoNotFoundError,ValueError):
             raise ValueError('Неизвестный часовой пояс повторения')
         return value
+
+
+class GoogleRecurrenceRule(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    frequency: Literal['google'] = 'google'
+    timezone: str
+    rules: list[str]
+    source_start: str | None = None

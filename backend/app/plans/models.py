@@ -3,9 +3,9 @@ from uuid import UUID, uuid4
 from sqlalchemy import DateTime, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
-from app.core.database import Base
+from app.core.database import Base, Owned
 
-class Plan(Base):
+class Plan(Owned, Base):
     __tablename__ = 'plans'
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     text: Mapped[str] = mapped_column(Text)

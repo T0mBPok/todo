@@ -9,11 +9,12 @@ from sqlalchemy.exc import IntegrityError
 from app.tasks.dao import TaskDAO
 from app.tasks.schemas import TaskRead
 from app.recurrences.dao import RecurrenceDAO
-from app.recurrences.service import instances,validate_conflicts,require_occurrence
+from app.recurrences.service import instances, validate_conflicts, require_occurrence, shift_occurrence, wall_offset
 
 def calendar_lock(session):
     # Serialize all calendar writes so virtual repetitions cannot race inserts.
-    session.execute(text('SELECT pg_advisory_xact_lock(83910241)'))
+    owner = session.info.get('owner_id')
+    session.execute(text('SELECT pg_advisory_xact_lock(:key)'), {'key': (owner.int & ((1 << 63) - 1)) if owner else 83910241})
 
 def commit(session):
     try: session.commit()
@@ -58,7 +59,7 @@ class TaskService:
         return task
 
     def validate(self,data,ignore=None):
-        existing=[task for task in self.dao.list() if task.id!=ignore]
+        existing=[task for task in self.dao.list() if task.id!=ignore and not task.is_all_day]
         validate_conflicts(data,existing,self.recurrences.exceptions())
 
     def create(self,data):
@@ -68,9 +69,55 @@ class TaskService:
         commit(self.session)
         return task
 
+    def validate_edit(self, task, data, start, end, ignore=None):
+        if task.is_all_day:
+            return
+        if (data.start, data.end) != (start, end) or data.recurrence:
+            self.validate([data], ignore=ignore)
+
+    def update_google_series(self, root, task, data, occurrence_start):
+        if task.series_parent_id:
+            selected, finish = task.start, task.end
+        else:
+            selected = occurrence_start or root.start
+            finish = require_occurrence(root, selected)
+        zone = ZoneInfo(root.recurrence['timezone'])
+        offset = wall_offset(selected, data.start, zone)
+        duration = root.end - root.start
+        if data.end - data.start != finish - selected:
+            duration = data.end - data.start
+        start = shift_occurrence(root.start, offset, zone)
+        end = start + duration
+        rule = dict(root.recurrence)
+        if offset:
+            if not rule.get('source_start'):
+                rule['source_start'] = root.start.isoformat()
+            excluded = self.recurrences.exceptions().get(root.id, set())
+            self.recurrences.clear(root.id)
+            for previous in excluded:
+                self.recurrences.exclude(root.id, shift_occurrence(previous, offset, zone))
+        if not root.is_all_day and (start, end) != (root.start, root.end):
+            candidate = Task(id=root.id, title=data.title, start=start, end=end, recurrence=rule, is_all_day=False)
+            self.validate([candidate], ignore=root.id)
+
+        fields = data.model_dump(include={'title', 'description', 'category', 'is_fixed'})
+        children = self.session.scalars(select(Task).where(Task.series_parent_id == root.id))
+        for child in children:
+            for field, value in fields.items():
+                if getattr(child, field) == getattr(root, field):
+                    setattr(child, field, value)
+            if offset and child.series_original_start:
+                child.series_original_start = shift_occurrence(child.series_original_start, offset, zone)
+        for field, value in fields.items():
+            setattr(root, field, value)
+        root.start, root.end, root.recurrence = start, end, rule
+        return root
+
     def update(self,task_id,data,scope=None,occurrence_start=None,commit_changes=True):
         calendar_lock(self.session)
         task=self.require(task_id)
+        if task.is_all_day and (data.start.time() != datetime.min.time() or data.end.time() != datetime.min.time()):
+            raise HTTPException(422, 'Укажите даты начала и окончания события на весь день.')
         if 'is_fixed' not in data.model_fields_set:
             data.is_fixed=task.is_fixed
         if 'category' not in data.model_fields_set:
@@ -80,15 +127,19 @@ class TaskService:
                 if scope not in ('occurrence','series'):
                     raise HTTPException(422,'Выберите: изменить одно событие или всю серию.')
                 root=self.require(task.series_parent_id) if task.series_parent_id else task
-                if scope=='occurrence' and not task.series_parent_id:
+                if scope=='series' and (root.recurrence or {}).get('frequency') == 'google':
+                    changed = self.update_google_series(root, task, data, occurrence_start)
+                elif scope=='occurrence' and not task.series_parent_id:
                     if occurrence_start is None: raise HTTPException(422,'Укажите выбранное повторение.')
-                    require_occurrence(root,occurrence_start)
+                    finish = require_occurrence(root,occurrence_start)
                     if occurrence_start in self.recurrences.exceptions().get(root.id,set()):
                         raise HTTPException(409,"Это повторение уже удалено или изменено.")
                     self.recurrences.exclude(root.id,occurrence_start)
                     single=TaskInput(**{**data.model_dump(),'recurrence':None})
-                    self.validate([single])
+                    self.validate_edit(root, single, occurrence_start, finish)
                     changed=self.dao.add(single)
+                    changed.from_google=root.from_google
+                    changed.is_all_day=root.is_all_day
                     changed.series_parent_id=root.id
                     changed.series_original_start=occurrence_start
                 elif scope=='series':
@@ -116,12 +167,14 @@ class TaskService:
                         child.is_fixed=data.is_fixed;child.title=data.title;child.description=data.description;child.category=data.category
                     changed=root
                 else:
-                    self.validate([data],ignore=task.id)
+                    self.validate_edit(task, data, task.start, task.end, ignore=task.id)
                     for key,value in data.model_dump().items(): setattr(task,key,value)
                     task.recurrence=None
                     changed=task
             else:
-                self.validate([data],ignore=task.id)
+                if task.is_all_day:
+                    data.recurrence = None
+                self.validate_edit(task, data, task.start, task.end, ignore=task.id)
                 for key,value in data.model_dump().items(): setattr(task,key,value)
                 task.recurrence=data.recurrence.model_dump() if data.recurrence else None
                 changed=task
@@ -142,7 +195,9 @@ class TaskService:
                     if occurrence_start is None: raise HTTPException(422,'Укажите начало удаляемого повторения.')
                     require_occurrence(task,occurrence_start)
                     self.recurrences.exclude(task.id,occurrence_start)
-            elif scope=='series': self.dao.delete(self.require(task.series_parent_id) if task.series_parent_id else task)
+            elif scope=='series':
+                root=self.require(task.series_parent_id) if task.series_parent_id else task
+                self.dao.delete(root)
             else: raise HTTPException(422,'Выберите: удалить одно событие или всю серию.')
         else: self.dao.delete(task)
         if commit_changes: commit(self.session)

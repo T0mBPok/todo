@@ -26,6 +26,18 @@ services:
   backend:
     build: ./backend
     environment:
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:5173}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_TOKEN_KEY: ${GOOGLE_TOKEN_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_TLS: ${SMTP_TLS:-starttls}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_CODE_KEY: ${EMAIL_CODE_KEY:-}
       SPEECH_URL: http://speech:8001
       DB_HOST: db
       DB_NAME: ${POSTGRES_DB:-todo}
@@ -40,7 +52,7 @@ services:
       OPENROUTER_RESPONSE_FORMAT: ${OPENROUTER_RESPONSE_FORMAT:-json_object}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:4b}
-    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --no-access-log --no-proxy-headers --limit-concurrency 40"]
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
