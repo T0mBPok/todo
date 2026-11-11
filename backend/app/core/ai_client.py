@@ -3,16 +3,20 @@ import json as jsonlib
 from urllib.parse import urlsplit
 import httpx
 from fastapi import HTTPException
-from app.core import config
+from app.core import config, gigachat
 
 def ai_post(url,*,timeout,json):
     if config.AI_PROVIDER=='ollama':
         return httpx.post(url,timeout=timeout,json=json)
     official=config.AI_PROVIDER=='dashscope'
-    provider='Alibaba Cloud Model Studio' if official else 'OpenRouter'
-    key=config.DASHSCOPE_API_KEY if official else config.OPENROUTER_API_KEY
+    is_gigachat = config.AI_PROVIDER == 'gigachat'
+    provider, setting = {
+        'dashscope': ('Alibaba Cloud Model Studio', 'DASHSCOPE_API_KEY'),
+        'gigachat': ('GigaChat', 'GIGACHAT_AUTH_KEY'),
+        'openrouter': ('OpenRouter', 'OPENROUTER_API_KEY'),
+    }[config.AI_PROVIDER]
+    key = getattr(config, setting)
     if not key:
-        setting='DASHSCOPE_API_KEY' if official else 'OPENROUTER_API_KEY'
         raise HTTPException(503,f'Для {provider} не задан {setting} в настройках бэкенда.')
     endpoint='https://openrouter.ai/api/v1/chat/completions'
     if official:
@@ -26,16 +30,31 @@ def ai_post(url,*,timeout,json):
         endpoint=config.DASHSCOPE_BASE_URL+'/chat/completions'
     messages=[dict(message) for message in json['messages']]
     schema=json.get('format',{})
-    if not official and config.OPENROUTER_RESPONSE_FORMAT=='json_schema':
+    if is_gigachat:
+        # Native constrained decoding stalls on the application's nested schemas.
+        required = ', '.join(schema.get('required', ()))
+        schema_line = 'Схема JSON (только правила формата): ' + jsonlib.dumps(schema, ensure_ascii=False, separators=(',', ':'))
+        instruction = ('Верни только объект с результатом, без Markdown. Не копируй схему и её служебные поля. '
+                       'Обязательные поля верхнего уровня: ' + required + '. '
+                       'Если для текстового пояснения нечего добавить, передай пустую строку.')
+        if messages and messages[0]['role'] == 'system':
+            messages[0]['content'] = '\n'.join((schema_line, messages[0]['content'], instruction))
+        else:
+            messages.insert(0, {'role': 'system', 'content': schema_line + '\n' + instruction})
+        response_format = None
+    elif not official and config.OPENROUTER_RESPONSE_FORMAT=='json_schema':
         response_format={'type':'json_schema','json_schema':{'name':'calendar_result','strict':True,'schema':schema}}
     else:
         response_format={'type':'json_object'}
         messages.insert(0,{'role':'system','content':'Верни только JSON, строго соответствующий следующей JSON Schema. Никакого Markdown или текста вне JSON: '+jsonlib.dumps(schema,ensure_ascii=False)})
     payload={'model':config.ai_model(),'messages':messages,'stream':False,
         'temperature':json.get('options',{}).get('temperature',0),
-        'max_tokens':json.get('options',{}).get('num_predict',2600),
-        'response_format':response_format}
-    if official:payload['enable_thinking']=False
+        'max_tokens':json.get('options',{}).get('num_predict',2600)}
+    if response_format is not None:
+        payload['response_format'] = response_format
+    if is_gigachat:
+        timeout = httpx.Timeout(min(timeout, 15), connect=min(timeout, 4))
+    elif official:payload['enable_thinking']=False
     else:
         payload['provider'] = {'require_parameters': True}
         if payload['model'] == 'nvidia/nemotron-3.5-super-vl:free' and json.get('think') is False:
@@ -43,8 +62,11 @@ def ai_post(url,*,timeout,json):
         # Cloud requests should fail promptly when a free endpoint stalls.
         timeout = httpx.Timeout(min(timeout, 12), connect=min(timeout, 3))
     try:
-        response=httpx.post(endpoint,timeout=timeout,
-            headers={'Authorization':'Bearer '+key},json=payload)
+        if is_gigachat:
+            response = gigachat.post(payload, timeout)
+        else:
+            response=httpx.post(endpoint,timeout=timeout,
+                headers={'Authorization':'Bearer '+key},json=payload)
         if official and response.status_code == 403:
             try:
                 body=response.json()
@@ -68,5 +90,5 @@ def ai_post(url,*,timeout,json):
         raise HTTPException(504,f'{provider} не ответил вовремя. Попробуйте сократить запрос.') from None
     except httpx.RequestError:
         raise HTTPException(503,f'Нет связи с {provider}. Проверьте доступ сервера в интернет.') from None
-    except (ValueError,KeyError,IndexError,TypeError):
+    except (ValueError,KeyError,IndexError,TypeError,AttributeError):
         raise HTTPException(502,f'{provider} вернул некорректный ответ. Календарь не изменён.') from None

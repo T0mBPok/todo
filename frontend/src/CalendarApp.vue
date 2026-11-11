@@ -145,7 +145,7 @@ watch(()=>props.refreshToken,()=>refreshSafely())
         <div class="sidebar-section"><h2>Мои календари <span>⌃</span></h2><div class="calendar-label"><span class="calendar-checkbox">✓</span>Мои задачи</div></div>
         <div class="voice-sidebar-card"><div class="voice-small-icon"><MicIcon /></div><h3>Голосовая заметка</h3><p>Расскажи о делах.<br>Они появятся в календаре.</p><button @click="voiceOpen=true">Сделать запись <span>→</span></button></div>
 
-        <div v-if="aiProvider" class="impulse-provider" :title="modelName"><i aria-hidden="true"></i>{{ aiProvider==='dashscope'?'Qwen · Alibaba Cloud':aiProvider==='openrouter'?'ИИ · OpenRouter':'Qwen · локальный' }}</div>
+        <div v-if="aiProvider" class="impulse-provider" :title="modelName"><i aria-hidden="true"></i>{{ aiProvider==='dashscope'?'Qwen · Alibaba Cloud':aiProvider==='openrouter'?'ИИ · OpenRouter':aiProvider==='gigachat'?'ИИ · GigaChat':'Qwen · локальный' }}</div>
       </aside>
       <div class="calendar-with-suggestions"><TaskCalendar ref="calendar" :tasks="tasks" v-model:day="day" :view="view" @select-task="contextTask=$event" @view-day="view='day'" @refresh="refreshSafely" @error="message=$event;voiceOpen=true" /><BalanceSuggestions :tasks="tasks" @applied="message=$event;refreshSafely()" /></div>
     </div>

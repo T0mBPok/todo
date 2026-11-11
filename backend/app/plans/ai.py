@@ -52,7 +52,7 @@ class AIPlanner:
         schema['$defs']['TaskInput'].setdefault('required',[]).append('category')
         instructions = planning_prompt(request.timezone, existing, schema)
         try:
-            if config.AI_PROVIDER == 'openrouter':
+            if config.AI_PROVIDER in {'openrouter', 'gigachat'}:
                 normalized = normalize_transcript(request.text)
                 instructions += '\nИсправляй очевидные оговорки при извлечении событий и сохраняй исходные даты, время и детали.'
             else:
@@ -117,6 +117,8 @@ class AIPlanner:
             raise HTTPException(502, 'Qwen вернула некорректный план. Уточните запрос.') from error
 
 def model_status():
+    if config.AI_PROVIDER == 'gigachat':
+        return bool(config.GIGACHAT_AUTH_KEY and config.GIGACHAT_MODEL)
     if config.AI_PROVIDER=='dashscope':return bool(config.DASHSCOPE_API_KEY and config.DASHSCOPE_MODEL)
     if config.AI_PROVIDER=='openrouter':return bool(config.OPENROUTER_API_KEY and config.OPENROUTER_MODEL)
     try:

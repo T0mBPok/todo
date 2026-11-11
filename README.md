@@ -206,3 +206,9 @@ API списка: /api/todos; разбор голоса: /api/todos/commands/pre
 Настройка аккаунтов, обмена с Google и публичного сервера описана в [SECURITY_AND_GOOGLE.md](SECURITY_AND_GOOGLE.md).
 
 Развёртывание на VPS описано в [DEPLOY.md](DEPLOY.md).
+
+### GigaChat для серверного запуска
+
+В серверном .env задайте AI_PROVIDER=gigachat, GIGACHAT_MODEL=GigaChat-2 и GIGACHAT_AUTH_KEY с ключом авторизации проекта для физлиц (GIGACHAT_API_PERS). Ключ используется для получения временного токена автоматически. Запустите docker compose up -d --build --wait backend frontend и проверьте ответ командой docker compose exec -T backend python -m app.core.check_ai.
+
+Бэкенду нужен исходящий HTTPS на api.giga.chat:443 и ngw.devices.sberbank.ru:9443. Сертификат для этих запросов входит в образ backend. Для локальной Qwen используйте AI_PROVIDER=ollama.
