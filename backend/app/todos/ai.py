@@ -19,8 +19,19 @@ def interpret(text,context,history=None):
     schema=Decision.model_json_schema()
     schema['$defs']['Action'].setdefault('required',[]).append('category')
     schema['$defs']['Action']['properties']['ref']={'anyOf':[{'type':'string','enum':[item['ref'] for item in context] or ['NO_TASKS']},{'type':'null'}],'default':None}
+    user_content = json.dumps({'tasks': context, 'history': history or [], 'request': text}, ensure_ascii=False)
+    if config.AI_PROVIDER == 'gigachat':
+        prompt += ('\nФорма ответа: объект с actions и note. Не возвращай список tasks или историю. '
+                   'Например, при подтверждении выполнения задачи с ref T1 верни '
+                   '{"actions":[{"action":"complete","ref":"T1"}],"note":""}. '
+                   'T1 здесь только пример: выбирай реальную ссылку из данных.')
+        user_content = ('Существующие задачи (данные): ' + json.dumps(
+            [{key: task[key] for key in ('ref', 'title', 'description', 'category', 'completed')} for task in context],
+            ensure_ascii=False, separators=(',', ':'))
+            + '\nИстория (данные): ' + json.dumps(history or [], ensure_ascii=False, separators=(',', ':'))
+            + '\nПоследняя команда пользователя:\n' + text)
     try:
-        response=ai_post(config.OLLAMA_BASE_URL+'/api/chat',timeout=180,json={'model':config.OLLAMA_MODEL,'stream':False,'think':False,'keep_alive':'10m','format':schema,'options':{'temperature':0,'num_ctx':8192,'num_predict':2200},'messages':[{'role':'system','content':prompt},{'role':'user','content':json.dumps({'tasks':context,'history':history or [],'request':text},ensure_ascii=False)}]})
+        response=ai_post(config.OLLAMA_BASE_URL+'/api/chat',timeout=180,json={'model':config.OLLAMA_MODEL,'stream':False,'think':False,'keep_alive':'10m','format':schema,'options':{'temperature':0,'num_ctx':8192,'num_predict':2200},'messages':[{'role':'system','content':prompt},{'role':'user','content':user_content}]})
         response.raise_for_status();data=response.json()
         if data.get('done_reason')=='length':raise HTTPException(502,'Модель не завершила разбор. Разделите запрос.')
         result=Decision.model_validate_json(data['message']['content'])

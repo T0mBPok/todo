@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from app.commands.models import Command
 from app.commands.dao import CommandDAO
 from app.commands.ai import interpret
-from app.commands.matching import deletion_request,score_name,tokens
+from app.commands.matching import deletion_request, exact_title, score_name, timed_creation, timed_deletion, tokens
 from app.commands.recurrence import existing_recurrence
 from app.tasks.models import Task
 from app.tasks.schemas import TaskRead,TaskInput
@@ -15,7 +15,7 @@ from app.tasks.service import TaskService,calendar_lock
 from app.plans.dates import resolve_anchor
 def words(value):
     return [w[:5] for w in re.findall(r"[а-яёa-z0-9]+",value.lower()) if len(w)>1 and w not in {"задача","событие","это","эту","эта","по","на","в"}]
-from app.plans.schemas import PlanRequest,PlanRead
+from app.plans.schemas import PlanOutput, PlanRead, PlanRequest
 from app.plans.service import PlanService
 from app.recurrences.service import instances
 def anchor(value,today):
@@ -25,6 +25,12 @@ def anchor(value,today):
     if result is None: raise HTTPException(422,'Не понял дату. Назовите день недели или точную дату.')
     return result
 def clock(value):
+    if value and 'T' in value:
+        try:
+            parsed = datetime.fromisoformat(value)
+            return parsed.hour, parsed.minute
+        except ValueError:
+            pass
     if not re.fullmatch(r'\d{1,2}:\d{2}',value or ''): raise HTTPException(422,'Не понял время. Укажите часы и минуты.')
     h,m=map(int,value.split(':'))
     if h>23 or m>59: raise HTTPException(422,'Некорректное время.')
@@ -34,12 +40,52 @@ class CommandService:
         self.session=session;self.tasks=TaskService(session);self.dao=CommandDAO(session)
     def prepare(self,request):
         from app.commands.context import calendar_context
-        from app.commands.grounded_ai import interpret_calendar
+        from app.commands.grounded_ai import Decision, SelectedOperation, interpret_calendar
         from app.commands.schemas import Operation
-        context,mapping=calendar_context(request,self.tasks)
-        from app.plans.dates import ANCHOR
-        explicit_days={anchor(match.group(),datetime.now(ZoneInfo(request.timezone)).date()) for match in ANCHOR.finditer(request.text)}
-        decision=interpret_calendar(request,context)
+        from app.plans.dates import ANCHOR, normalize_clock_minutes
+
+        zone = ZoneInfo(request.timezone)
+        today = datetime.now(zone).date()
+        explicit_days = {anchor(match.group(), today) for match in ANCHOR.finditer(request.text)}
+        exact_create = timed_creation(request.text)
+        if exact_create:
+            day_word, title, first, last = exact_create
+            day = anchor(day_word, today)
+            start_hour, start_minute = clock(first)
+            end_hour, end_minute = clock(last)
+            start = datetime(day.year, day.month, day.day, start_hour, start_minute, tzinfo=zone)
+            end = datetime(day.year, day.month, day.day, end_hour, end_minute, tzinfo=zone)
+            if end == start:
+                raise HTTPException(422, 'Начало и конец совпадают. Уточните время окончания.')
+            if end < start:
+                end += timedelta(days=1)
+            from app.core.priority import classify_category
+            task = TaskInput(title=title, start=start, end=end, category=classify_category(title, '', request.text))
+            normalized = normalize_clock_minutes(request.text)
+            draft = PlanService(self.session).save_draft(
+                request, PlanOutput(tasks=[task], note=f'Понял: {title}, {start:%d.%m %H:%M}–{end:%d.%m %H:%M}.',
+                                    normalized_text=normalized))
+            plan = PlanRead.model_validate(draft)
+            plan.normalized_text = normalized
+            return {'kind': 'plan', 'plan': plan}
+        exact_delete = timed_deletion(request.text)
+        if exact_delete:
+            day_word, title, start_time = exact_delete
+            day = anchor(day_word, today)
+            start = datetime.combine(day, datetime.min.time(), zone)
+            matches = [event for event in self.tasks.list(start, start + timedelta(days=1))
+                       if exact_title(title, event.title)
+                       and event.start.astimezone(zone).date() == day
+                       and event.start.astimezone(zone).strftime('%H:%M') == start_time]
+            if not matches:
+                raise HTTPException(422, f'Не нашёл «{title}» на {day:%d.%m} в {start_time}. Проверьте название и время.')
+            mapping = {f'E{i}': event for i, event in enumerate(matches, 1)}
+            decision = Decision(intent='manage', note=f'Удалить событие на {day:%d.%m} в {start_time}.',
+                                operations=[SelectedOperation(action='delete', refs=list(mapping), scope='occurrence')])
+        else:
+            context, mapping = calendar_context(request, self.tasks)
+            model_request = request.model_copy(update={'text': normalize_clock_minutes(request.text)})
+            decision = interpret_calendar(model_request, context)
         if decision.intent=='clarify':raise HTTPException(422,decision.note)
         if decision.intent=='create':
             plan_request = PlanRequest(text=decision.create_text or request.text, timezone=request.timezone)
@@ -51,6 +97,7 @@ class CommandService:
             return {'kind':'plan','plan':value}
         if 'кроме' in request.text.lower() and any(action.action=='delete' for action in decision.operations) and not decision.keep_refs:
             raise HTTPException(422,'Модель не определила, какие события сохранить. Календарь не изменён; уточните исключение.')
+        append = re.fullmatch(r'\s*добавь\s+в\s+описание\s+([^:;.!?]+):\s*(.+)', request.text, re.I | re.S)
         operations=[];seen=set()
         for action in decision.operations:
             chosen=list(dict.fromkeys(action.refs))
@@ -73,6 +120,11 @@ class CommandService:
                     if key in seen:raise HTTPException(422,'Одно событие выбрано дважды. Разделите действия.')
                     seen.add(key)
                 changes=action.model_dump(exclude={'action','refs','selection'})
+                if (append and action.action == 'update' and len(decision.operations) == 1
+                        and not decision.new_events and action.selection == 'one'
+                        and all(exact_title(append[1], candidate.title) for candidate in candidates)):
+                    changes['description'] = append[2].strip()[:5000]
+                    changes['append_description'] = True
                 if action.action=='update' and not any(changes.get(k) is not None for k in ('new_title','description','new_time','new_date_reference','duration_minutes','new_recurrence')):
                     raise HTTPException(422,'Не определено, что изменить в выбранной задаче.')
                 instruction=Operation(operation=action.action,target=candidates[0].title,**changes)

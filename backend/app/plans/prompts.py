@@ -3,6 +3,8 @@ import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from app.plans.dates import normalize_clock_minutes
+
 WEEKDAYS = ('понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье')
 
 def date_context(timezone, now=None):
@@ -25,8 +27,7 @@ def normalize_transcript(text):
     for pattern, replacement in replacements:
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
     text = re.sub(r'(?<![\d-])([01]?\d|2[0-3])[-–]([0-5]\d)(?![\d-])', r'\1:\2', text)
-    text = re.sub(r'(?<!\d)([01]?\d|2[0-3]):([0-5]?\d)(?!\d)', lambda match: f'{int(match[1]):02d}:{int(match[2]):02d}', text)
-    return text
+    return normalize_clock_minutes(text)
 
 def planning_prompt(timezone, existing, schema, now=None):
     from app.core.priority import PRIORITY_RULES

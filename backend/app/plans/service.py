@@ -22,6 +22,9 @@ class PlanService:
         # Send each stored series once; expanding months of repetitions exhausts the local model context.
         existing = [TaskRead.model_validate(task).model_dump(mode='json',exclude={'description','occurrence_id','occurrence_start','series_parent_id','series_original_start','plan_id'}) for task in self.tasks.list()][:100]
         result = self.planner.generate(request, existing)
+        return self.save_draft(request, result)
+
+    def save_draft(self, request, result):
         plan = self.dao.add(request, result)
         commit(self.session)
         return plan

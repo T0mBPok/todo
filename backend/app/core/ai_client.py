@@ -83,8 +83,20 @@ def ai_post(url,*,timeout,json):
         if response.is_error:raise HTTPException(502,f'Ошибка провайдера {provider}. Повторите запрос позже.')
         value=response.json()
         if value.get('error'):raise HTTPException(502,f'{provider} не завершил запрос. Повторите позже.')
-        choice=value['choices'][0];content=choice['message']['content']
-        if not isinstance(content,str) or not content.strip():raise HTTPException(502,f'{provider} вернул пустой ответ.')
+        choices = value.get('choices') or []
+        choice = choices[0] if choices else {}
+        if is_gigachat and choice.get('finish_reason') == 'blacklist':
+            raise HTTPException(422, 'GigaChat отклонил формулировку. Попробуйте сказать иначе.')
+        content = choice.get('message', {}).get('content')
+        if not isinstance(content,str) or not content.strip():
+            if is_gigachat:
+                raise HTTPException(502, 'GigaChat не вернул результат. Попробуйте повторить команду.')
+            raise HTTPException(502,f'{provider} вернул пустой ответ.')
+        if is_gigachat and choice.get('finish_reason') != 'length':
+            # GigaChat can emit literal newlines in JSON strings such as shopping lists.
+            # Re-encode the parsed value; domain validators still check the actual fields.
+            parsed = jsonlib.loads(content, strict=False)
+            content = jsonlib.dumps(parsed, ensure_ascii=False, separators=(',', ':'))
         return httpx.Response(200,request=httpx.Request('POST','http://ai.internal/result'),json={'message':{'content':content},'done_reason':choice.get('finish_reason','stop')})
     except httpx.TimeoutException:
         raise HTTPException(504,f'{provider} не ответил вовремя. Попробуйте сократить запрос.') from None

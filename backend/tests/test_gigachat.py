@@ -52,3 +52,31 @@ def test_gigachat_explains_uuid_is_not_authorization_key(monkeypatch):
     monkeypatch.setattr(config, 'GIGACHAT_AUTH_KEY', '12345678-1234-1234-1234-123456789abc')
     with pytest.raises(HTTPException, match='Authorization Key'):
         gigachat.authorization_key()
+
+
+@pytest.mark.parametrize('reason, calls', [('stop', 2), ('blacklist', 1)])
+def test_gigachat_retries_only_empty_completion(monkeypatch, reason, calls):
+    monkeypatch.setattr(config, 'AI_PROVIDER', 'gigachat')
+    monkeypatch.setattr(config, 'GIGACHAT_AUTH_KEY', 'Y2xpZW50OnNlY3JldA==')
+    monkeypatch.setattr(gigachat, '_token', 'cached')
+    monkeypatch.setattr(gigachat, '_expires', time() + 600)
+    requests = []
+
+    def endpoint(request):
+        assert str(request.url) == gigachat.CHAT_URL
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(200, json={'choices': [{'message': {'content': ''}, 'finish_reason': reason}]})
+        return httpx.Response(200, json={'choices': [{'message': {'content': '{"description":"Milk\nBread"}'}}]})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(httpx, 'Client', lambda **kwargs: real_client(transport=httpx.MockTransport(endpoint), **kwargs))
+    payload = {'format': {}, 'messages': [{'role': 'user', 'content': 'Test'}]}
+    if reason == 'blacklist':
+        with pytest.raises(HTTPException) as error:
+            ai_post('unused', timeout=15, json=payload)
+        assert error.value.status_code == 422
+    else:
+        content = ai_post('unused', timeout=15, json=payload).json()['message']['content']
+        assert json.loads(content) == {'description': 'Milk\nBread'}
+    assert len(requests) == calls

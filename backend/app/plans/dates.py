@@ -34,6 +34,13 @@ def explicit_weekday_date(tail, today):
 CLOCK = r'(?<![\d:])(?:[01]?\d|2[0-3]):[0-5]\d(?![\d:])'
 TIME_RANGE = re.compile(rf'\b(?:с\s+)?({CLOCK})(?:\s+до\s+|\s*[-–—]\s*)({CLOCK})', re.I)
 START_TIME = re.compile(rf'\b(?:в|во)\s+({CLOCK})', re.I)
+SHORT_CLOCK = re.compile(r'(?<![\d:])([01]?\d|2[0-3]):([0-5]?\d)(?![\d:])')
+
+
+def normalize_clock_minutes(text):
+    return SHORT_CLOCK.sub(lambda match: f'{int(match[1]):02d}:{int(match[2]):02d}', text)
+
+
 DETAIL_MARKER = re.compile(r'\b(?:в\s+описании|описание(?:\s+задачи)?|детали)\s*[:—-]', re.I)
 
 
@@ -41,7 +48,7 @@ def enforce_spoken_time(tasks, text, timezone_name):
     """Apply a single unambiguous numeric time in the user's timezone."""
     if len(tasks) != 1:
         return False
-    scheduling_text = DETAIL_MARKER.split(text, maxsplit=1)[0]
+    scheduling_text = normalize_clock_minutes(DETAIL_MARKER.split(text, maxsplit=1)[0])
     clocks = re.findall(CLOCK, scheduling_text)
     interval = TIME_RANGE.search(scheduling_text) if len(clocks) == 2 else None
     start_only = START_TIME.search(scheduling_text) if len(clocks) == 1 else None

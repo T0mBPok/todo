@@ -29,6 +29,37 @@ class Decision(BaseModel):
     note: str=Field(max_length=2000)
     create_text: str|None=Field(default=None,max_length=6000)
 
+MAX_CONTEXT_CHARS = 42000
+
+
+def calendar_payload(request, context):
+    payload = {'calendar': context, 'history': [item.model_dump() for item in request.history],
+               'request': request.text}
+
+    def encode():
+        return json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+
+    encoded = encode()
+    if len(encoded) <= MAX_CONTEXT_CHARS:
+        return encoded
+    # Catalogue and series are hints. The actual action targets are all in events.
+    calendar = {**context, 'catalogue': [], 'series': []}
+    payload['calendar'] = calendar
+    encoded = encode()
+    if len(encoded) <= MAX_CONTEXT_CHARS:
+        return encoded
+    for limit in (600, 160, 0):
+        calendar['events'] = [
+            {**{key: value for key, value in event.items() if key not in {'id', 'weekday'}},
+             'description': event['description'][:limit]}
+            for event in context['events']
+        ]
+        encoded = encode()
+        if len(encoded) <= MAX_CONTEXT_CHARS:
+            return encoded
+    raise HTTPException(422, 'В выбранном диапазоне слишком много событий. Укажите день и название события.')
+
+
 def interpret_calendar(request,context):
     schema=Decision.model_json_schema()
     schema.setdefault('required',[]).extend(['operations','new_events'])
@@ -55,11 +86,9 @@ scope=occurrence для названной даты или «одно событ
 Если нужных событий нет в предоставленном контексте или невозможно понять действие — intent=clarify и короткий конкретный вопрос в note. Не выдумывай цели, дату, описание или действие. Не возвращай успешную manage без операций.
 """
     if replacement:prompt+='\nЭто запрос ЗАМЕНЫ: сначала удалить названные существующие события, затем СОЗДАТЬ новые. operations содержит только удаления (selection=all), new_events ОБЯЗАТЕЛЬНО содержит все новые события после слова «вместо», включая последнее. Не используй update и не переименовывай удаляемые события. В 14:00 и в 19:00 — отдельные новые события, время в start/end, не в new_date_reference.'
-    payload={'calendar':context,'history':[item.model_dump() for item in request.history],'request':request.text}
-    if len(json.dumps(payload,ensure_ascii=False))>42000:
-        raise HTTPException(422,'Контекст календаря слишком большой. Укажите конкретную дату и откройте день или неделю.')
+    payload = calendar_payload(request, context)
     try:
-        response=ai_post(config.OLLAMA_BASE_URL+'/api/chat',timeout=180,json={'model':config.OLLAMA_MODEL,'stream':False,'think':False,'keep_alive':'10m','format':schema,'options':{'temperature':0,'num_ctx':16384,'num_predict':2600},'messages':[{'role':'system','content':prompt},{'role':'user','content':json.dumps(payload,ensure_ascii=False)}]})
+        response=ai_post(config.OLLAMA_BASE_URL+'/api/chat',timeout=180,json={'model':config.OLLAMA_MODEL,'stream':False,'think':False,'keep_alive':'10m','format':schema,'options':{'temperature':0,'num_ctx':16384,'num_predict':2600},'messages':[{'role':'system','content':prompt},{'role':'user','content':payload}]})
         response.raise_for_status();data=response.json()
         if data.get('done_reason')=='length':raise HTTPException(502,'Модель не завершила разбор команды. Уточните день или разделите действия.')
         value = json.loads(data['message']['content'])

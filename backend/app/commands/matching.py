@@ -1,7 +1,7 @@
 """Ground names and deletion corrections in actual calendar events."""
 import re
 from difflib import SequenceMatcher
-from app.plans.dates import ANCHOR
+from app.plans.dates import ANCHOR, CLOCK, normalize_clock_minutes
 from app.commands.schemas import Interpretation,Operation
 
 ALIASES={'пару':'пара','пары':'пара','паре':'пара','парой':'пара','универ':'университет','универе':'университет','универа':'университет','университете':'университет','университета':'университет','валибол':'волейбол','волейболу':'волейбол','боскибол':'баскетбол','баскетболу':'баскетбол'}
@@ -17,6 +17,58 @@ def score_name(target,title):
     values=[max(SequenceMatcher(None,w,t).ratio() for t in actual) for w in wanted]
     if min(values)<0.75:return 0
     return sum(values)/len(values)*0.95
+
+# A deliberately narrow form: one named event, one relative day, one start time.
+_TIMED_DELETE = re.compile(
+    r'(?:(?P<verb>убери|удали)\s+)?(?P<day>сегодня|завтра|послезавтра)\s+'
+    r'(?P<title>[\w -]+?)\s+(?:с|в)\s+'
+    r'(?P<clock>(?:[01]\d|2[0-3]):[0-5]\d|час(?:а)?\s+ночи)'
+    r'(?:\s+(?P<last>убери|удали))?[.!]?', re.I,
+)
+
+
+def timed_deletion(text):
+    match = _TIMED_DELETE.fullmatch(normalize_clock_minutes(text.strip()))
+    if not match or bool(match['verb']) == bool(match['last']):
+        return None
+    title = match['title']
+    if ANCHOR.search(title) or re.search(
+        r'\b(?:и|или|кроме|вс[еёю]|сери\w*|повтор\w*|убери|удали|добавь|перенеси|измени)\b', title, re.I,
+    ):
+        return None
+    clock = match['clock']
+    return match['day'], title, clock if ':' in clock else '01:00'
+
+
+_TIMED_CREATE = re.compile(
+    rf'(?:поставь|запланируй|добавь)\s+(?:мне\s+)?(?P<title>[\w -]+?)\s+'
+    rf'(?:на\s+)?(?P<day>сегодня|завтра|послезавтра)\s+с\s+(?P<start>{CLOCK})\s+до\s+(?P<end>{CLOCK})[.!]?',
+    re.I,
+)
+
+
+def timed_creation(text):
+    match = _TIMED_CREATE.fullmatch(normalize_clock_minutes(text.strip()))
+    if not match:
+        return None
+    title = match['title'].strip()
+    if not tokens(title) or ANCHOR.search(title) or re.search(
+        r'\b(?:и|или|потом|кажд\w*|повтор\w*|убери|удали|добавь|перенеси|измени|точнее|лучше)\b', title, re.I,
+    ):
+        return None
+    if title.lower() == 'тренировку':
+        title = 'Тренировка'
+    else:
+        title = title[:1].upper() + title[1:]
+    return match['day'], title, match['start'], match['end']
+
+
+def exact_title(target, title):
+    def normalized(value):
+        return ['тренировка' if word in {'тренировку', 'тренировки', 'тренировке'} else word
+                for word in tokens(value)]
+    return bool(normalized(target)) and normalized(target) == normalized(title)
+
 
 def deletion_request(request):
     text=request.text.strip()

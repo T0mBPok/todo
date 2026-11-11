@@ -14,8 +14,11 @@ def test_spoken_tomsk_range_survives_utc_model_error_and_auto_save(client, monke
     day = (datetime.now(zone).date() + timedelta(days=1)).isoformat()
     # Reproduce both failure modes: the first model call loses the explicit
     # interval, then the planner mistakes spoken wall time for UTC.
-    monkeypatch.setattr(grounded_ai, 'interpret_calendar', lambda *_: grounded_ai.Decision(
-        intent='create', note='', create_text='Завтра тренировка'))
+    def interpret(request, _context):
+        assert '18:00 до 19:00' in request.text
+        return grounded_ai.Decision(intent='create', note='', create_text='Завтра тренировка')
+
+    monkeypatch.setattr(grounded_ai, 'interpret_calendar', interpret)
     monkeypatch.setattr(ai.config, 'AI_PROVIDER', 'gigachat')
     model_plan = ai.ExtractedPlan(
         tasks=[{'title': 'Тренировка', 'start': day + 'T18:00:00Z', 'end': day + 'T19:00:00Z'}],
@@ -25,7 +28,7 @@ def test_spoken_tomsk_range_survives_utc_model_error_and_auto_save(client, monke
         200, request=httpx.Request('POST', url), json={'message': {'content': model_plan.model_dump_json()}}))
 
     response = api.post('/api/commands', json={
-        'text': 'Поставь мне тонировку на завтра с 18:00 до 19:00.', 'timezone': 'Asia/Tomsk',
+        'text': 'Пожалуйста, поставь мне тонировку на завтра с 18:0 до 19:0.', 'timezone': 'Asia/Tomsk',
     })
     assert response.status_code == 200, response.text
     draft = response.json()['plan']

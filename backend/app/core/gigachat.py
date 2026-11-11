@@ -5,7 +5,7 @@ import ssl
 from functools import lru_cache
 from pathlib import Path
 from threading import Lock
-from time import time
+from time import monotonic, time
 from uuid import uuid4
 
 import httpx
@@ -67,11 +67,32 @@ def access_token(client, rejected_token=None):
         return token
 
 
+def empty_completion(response):
+    if not response.is_success:
+        return False
+    choices = response.json().get('choices')
+    if not choices:
+        return True
+    choice = choices[0]
+    content = choice.get('message', {}).get('content')
+    return choice.get('finish_reason', 'stop') == 'stop' and (
+        content is None or isinstance(content, str) and not content.strip()
+    )
+
+
 def post(payload, timeout):
     with httpx.Client(verify=tls_context(), trust_env=False, timeout=timeout) as client:
         token = access_token(client)
+        started = monotonic()
         response = client.post(CHAT_URL, headers={'Authorization': 'Bearer ' + token}, json=payload)
         if response.status_code == 401:
             token = access_token(client, rejected_token=token)
+            started = monotonic()
             response = client.post(CHAT_URL, headers={'Authorization': 'Bearer ' + token}, json=payload)
+        remaining = timeout.read - (monotonic() - started)
+        if remaining > 1 and empty_completion(response):
+            response = client.post(
+                CHAT_URL, headers={'Authorization': 'Bearer ' + token}, json=payload,
+                timeout=httpx.Timeout(remaining, connect=min(remaining, timeout.connect)),
+            )
         return response
