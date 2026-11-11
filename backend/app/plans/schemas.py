@@ -8,6 +8,7 @@ class PlanRequest(BaseModel):
     text: str = Field(min_length=1, max_length=6000)
     timezone: str = 'Asia/Tomsk'
     _spoken_text: str | None = PrivateAttr(default=None)
+    _normalized_text: str | None = PrivateAttr(default=None)
 
     @field_validator('timezone')
     @classmethod

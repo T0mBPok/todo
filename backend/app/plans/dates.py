@@ -1,5 +1,6 @@
 """Resolve explicit date anchors in speech independently of model arithmetic."""
 import re
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from fastapi import HTTPException
 from zoneinfo import ZoneInfo
@@ -33,48 +34,88 @@ def explicit_weekday_date(tail, today):
 
 CLOCK = r'(?<![\d:])(?:[01]?\d|2[0-3]):[0-5]\d(?![\d:])'
 TIME_RANGE = re.compile(rf'\b(?:с\s+)?({CLOCK})(?:\s+до\s+|\s*[-–—]\s*)({CLOCK})', re.I)
-START_TIME = re.compile(rf'\b(?:в|во)\s+({CLOCK})', re.I)
+START_TIME = re.compile(rf'\b(?:в|во|на)\s+({CLOCK})', re.I)
 SHORT_CLOCK = re.compile(r'(?<![\d:])([01]?\d|2[0-3]):([0-5]?\d)(?![\d:])')
+COMPACT_RANGE_END = re.compile(rf'({CLOCK}\s+до\s+)([01]\d|2[0-3])([0-5]\d)\b(?![.:]\d)', re.I)
 
 
 def normalize_clock_minutes(text):
-    return SHORT_CLOCK.sub(lambda match: f'{int(match[1]):02d}:{int(match[2]):02d}', text)
+    text = SHORT_CLOCK.sub(lambda match: f'{int(match[1]):02d}:{int(match[2]):02d}', text)
+    return COMPACT_RANGE_END.sub(r'\1\2:\3', text)
 
 
 DETAIL_MARKER = re.compile(r'\b(?:в\s+описании|описание(?:\s+задачи)?|детали)\s*[:—-]', re.I)
 
 
-def enforce_spoken_time(tasks, text, timezone_name):
-    """Apply a single unambiguous numeric time in the user's timezone."""
-    if len(tasks) != 1:
-        return False
+DURATION = re.compile(r'\b(?:час\w*|минут\w*|секунд\w*|полчаса|полтора|полторы)\b', re.I)
+SENTENCE_BREAK = re.compile(r'\.(?!\d)|[!?;]')
+CLAUSE_BREAK = re.compile(r',\s*|\s+(?:и|а|потом|затем)\s+', re.I)
+
+
+def spoken_slots(text):
     scheduling_text = normalize_clock_minutes(DETAIL_MARKER.split(text, maxsplit=1)[0])
-    clocks = re.findall(CLOCK, scheduling_text)
-    interval = TIME_RANGE.search(scheduling_text) if len(clocks) == 2 else None
-    start_only = START_TIME.search(scheduling_text) if len(clocks) == 1 else None
-    if not interval and not start_only:
-        return False
+    for sentence in SENTENCE_BREAK.split(scheduling_text):
+        clock_count = len(re.findall(CLOCK, sentence))
+        single_slot_size = 2 if TIME_RANGE.search(sentence) else 1
+        clauses = CLAUSE_BREAK.split(sentence) if clock_count > single_slot_size else [sentence]
+        for clause in clauses:
+            clocks = re.findall(CLOCK, clause)
+            interval = TIME_RANGE.search(clause) if len(clocks) == 2 else None
+            start = START_TIME.search(clause) if len(clocks) == 1 else None
+            if interval or start:
+                yield clause, (interval or start)[1], interval[2] if interval else None
 
-    task = tasks[0]
+
+def enforce_spoken_time(tasks, text, timezone_name, *alternatives):
+    """Apply explicit wall-clock times by matching each event to its own clause."""
     zone = ZoneInfo(timezone_name)
-    local_day = task.start.astimezone(zone).date()
+    now = datetime.now(zone)
+    resolved = set()
+    fully_timed = None
+    for source in dict.fromkeys((text, *alternatives)):
+        slots = list(spoken_slots(source))
+        if len(slots) == len(tasks) and fully_timed is None:
+            fully_timed = slots
+        if len(tasks) == 1 and len(slots) == 1:
+            matches = {0: slots[0]}
+        else:
+            matches = {}
+            for clause, first, last in slots:
+                tokens = set(words(clause))
+                scores = [len(set(words(task.title)) & tokens) for task in tasks]
+                best = max(scores, default=0)
+                if best and scores.count(best) == 1:
+                    index = scores.index(best)
+                    matches.setdefault(index, []).append((clause, first, last))
+            matches = {index: candidates[0] for index, candidates in matches.items()
+                       if len(candidates) == 1}
 
-    def on_day(value, day):
-        hour, minute = map(int, value.split(':'))
-        return datetime(day.year, day.month, day.day, hour, minute, tzinfo=zone)
+        for index, (clause, first, last) in matches.items():
+            if index in resolved:
+                continue
+            task = tasks[index]
+            if len(tasks) > 1 and len(ANCHOR.findall(clause)) == 1:
+                enforce_date_context([task], clause, timezone_name, now)
+            day = task.start.astimezone(zone).date()
+            start = datetime.fromisoformat(f'{day}T{first}').replace(tzinfo=zone)
+            if last:
+                end = datetime.fromisoformat(f'{day}T{last}').replace(tzinfo=zone)
+                if end == start:
+                    raise HTTPException(422, 'Начало и конец совпадают. Уточните время окончания.')
+                if end < start:
+                    end += timedelta(days=1)
+                task.end = end.astimezone(timezone.utc)
+            else:
+                duration = task.end - task.start if DURATION.search(clause) else timedelta(hours=1)
+                task.end = start.astimezone(timezone.utc) + duration
+            task.start = start.astimezone(timezone.utc)
+            resolved.add(index)
 
-    start = on_day((interval or start_only)[1], local_day)
-    if interval:
-        end = on_day(interval[2], local_day)
-        if end == start:
-            raise HTTPException(422, 'Начало и конец совпадают. Уточните время окончания.')
-        if end < start:
-            end += timedelta(days=1)
-        task.end = end.astimezone(timezone.utc)
-    else:
-        task.end = start.astimezone(timezone.utc) + (task.end - task.start)
-    task.start = start.astimezone(timezone.utc)
-    return True
+    if fully_timed and len(resolved) < len(tasks):
+        expected = Counter(first for _, first, _ in fully_timed)
+        actual = Counter(task.start.astimezone(zone).strftime('%H:%M') for task in tasks)
+        if expected != actual:
+            raise HTTPException(422, 'Не удалось сопоставить время с каждым событием. Назовите событие и его время отдельной фразой.')
 
 
 STOP = {'потом','после','сразу','будет','меня','университете','завтра','сегодня','него'}

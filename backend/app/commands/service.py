@@ -16,6 +16,8 @@ from app.plans.dates import resolve_anchor
 def words(value):
     return [w[:5] for w in re.findall(r"[а-яёa-z0-9]+",value.lower()) if len(w)>1 and w not in {"задача","событие","это","эту","эта","по","на","в"}]
 from app.plans.schemas import PlanOutput, PlanRead, PlanRequest
+from app.core import config
+from app.plans.ai import AIPlanner
 from app.plans.service import PlanService
 from app.recurrences.service import instances
 def anchor(value,today):
@@ -42,26 +44,29 @@ class CommandService:
         from app.commands.context import calendar_context
         from app.commands.grounded_ai import Decision, SelectedOperation, interpret_calendar
         from app.commands.schemas import Operation
-        from app.plans.dates import ANCHOR, normalize_clock_minutes
+        from app.plans.dates import ANCHOR
 
         zone = ZoneInfo(request.timezone)
         today = datetime.now(zone).date()
         explicit_days = {anchor(match.group(), today) for match in ANCHOR.finditer(request.text)}
-        exact_create = timed_creation(request.text)
+        from app.plans.prompts import normalize_transcript
+        normalized_command = normalize_transcript(request.text)
+        exact_create = timed_creation(normalized_command)
         if exact_create:
             day_word, title, first, last = exact_create
             day = anchor(day_word, today)
             start_hour, start_minute = clock(first)
-            end_hour, end_minute = clock(last)
             start = datetime(day.year, day.month, day.day, start_hour, start_minute, tzinfo=zone)
-            end = datetime(day.year, day.month, day.day, end_hour, end_minute, tzinfo=zone)
-            if end == start:
-                raise HTTPException(422, 'Начало и конец совпадают. Уточните время окончания.')
-            if end < start:
-                end += timedelta(days=1)
-            from app.core.priority import classify_category
-            task = TaskInput(title=title, start=start, end=end, category=classify_category(title, '', request.text))
-            normalized = normalize_clock_minutes(request.text)
+            end = start + timedelta(hours=1)
+            if last is not None:
+                end_hour, end_minute = clock(last)
+                end = start.replace(hour=end_hour, minute=end_minute)
+                if end == start:
+                    raise HTTPException(422, 'Начало и конец совпадают. Уточните время окончания.')
+                if end < start:
+                    end += timedelta(days=1)
+            task = TaskInput(title=title, start=start, end=end)
+            normalized = normalized_command
             draft = PlanService(self.session).save_draft(
                 request, PlanOutput(tasks=[task], note=f'Понял: {title}, {start:%d.%m %H:%M}–{end:%d.%m %H:%M}.',
                                     normalized_text=normalized))
@@ -83,13 +88,17 @@ class CommandService:
             decision = Decision(intent='manage', note=f'Удалить событие на {day:%d.%m} в {start_time}.',
                                 operations=[SelectedOperation(action='delete', refs=list(mapping), scope='occurrence')])
         else:
+            if config.AI_PROVIDER == 'gigachat':
+                normalized_command, _ = AIPlanner().normalize(request.text)
             context, mapping = calendar_context(request, self.tasks)
-            model_request = request.model_copy(update={'text': normalize_clock_minutes(request.text)})
+            model_request = request.model_copy(update={'text': normalized_command})
             decision = interpret_calendar(model_request, context)
         if decision.intent=='clarify':raise HTTPException(422,decision.note)
         if decision.intent=='create':
-            plan_request = PlanRequest(text=decision.create_text or request.text, timezone=request.timezone)
+            plan_request = PlanRequest(text=decision.create_text or normalized_command, timezone=request.timezone)
             plan_request._spoken_text = request.text
+            if config.AI_PROVIDER == 'gigachat':
+                plan_request._normalized_text = normalized_command
             plan = PlanService(self.session).create(plan_request)
             value=PlanRead.model_validate(plan)
             marker=' Нормализованный текст: '

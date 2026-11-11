@@ -40,15 +40,27 @@ def timed_deletion(text):
     return match['day'], title, clock if ':' in clock else '01:00'
 
 
+_CREATE_TIME = (
+    rf'(?:с\s+(?P<start>{CLOCK})\s+до\s+(?P<end>{CLOCK})'
+    rf'|(?:на|в)\s+(?P<single>{CLOCK})(?:\s+(?P<period>утра|дня|вечера|ночи))?)'
+)
+
 _TIMED_CREATE = re.compile(
     rf'(?:поставь|запланируй|добавь)\s+(?:мне\s+)?(?P<title>[\w -]+?)\s+'
-    rf'(?:на\s+)?(?P<day>сегодня|завтра|послезавтра)\s+с\s+(?P<start>{CLOCK})\s+до\s+(?P<end>{CLOCK})[.!]?',
+    rf'(?:на\s+)?(?P<day>сегодня|завтра|послезавтра)\s+{_CREATE_TIME}[.!]?',
     re.I,
 )
 
 
+_TIMED_CREATE_DAY_FIRST = re.compile(
+    rf'(?:поставь|запланируй|добавь)\s+(?:мне\s+)?(?:на\s+)?(?P<day>сегодня|завтра|послезавтра)\s+'
+    rf'(?P<title>[\w -]+?)\s+{_CREATE_TIME}[.!]?', re.I,
+)
+
+
 def timed_creation(text):
-    match = _TIMED_CREATE.fullmatch(normalize_clock_minutes(text.strip()))
+    text = normalize_clock_minutes(text.strip())
+    match = _TIMED_CREATE_DAY_FIRST.fullmatch(text) or _TIMED_CREATE.fullmatch(text)
     if not match:
         return None
     title = match['title'].strip()
@@ -60,6 +72,16 @@ def timed_creation(text):
         title = 'Тренировка'
     else:
         title = title[:1].upper() + title[1:]
+    if match['single']:
+        hour, minute = map(int, match['single'].split(':'))
+        period = (match['period'] or '').lower()
+        if period in {'дня', 'вечера'} and 1 <= hour < 12:
+            hour += 12
+        elif period == 'ночи' and hour == 12:
+            hour = 0
+        elif period == 'утра' and hour >= 12:
+            return None
+        return match['day'], title, f'{hour:02d}:{minute:02d}', None
     return match['day'], title, match['start'], match['end']
 
 

@@ -54,8 +54,10 @@ def test_gigachat_explains_uuid_is_not_authorization_key(monkeypatch):
         gigachat.authorization_key()
 
 
-@pytest.mark.parametrize('reason, calls', [('stop', 2), ('blacklist', 1)])
-def test_gigachat_retries_only_empty_completion(monkeypatch, reason, calls):
+@pytest.mark.parametrize('reason, first_content, calls', [
+    ('stop', '', 2), ('stop', '{"broken":', 2), ('blacklist', '', 1),
+])
+def test_gigachat_retries_invalid_completion_but_not_policy_refusal(monkeypatch, reason, first_content, calls):
     monkeypatch.setattr(config, 'AI_PROVIDER', 'gigachat')
     monkeypatch.setattr(config, 'GIGACHAT_AUTH_KEY', 'Y2xpZW50OnNlY3JldA==')
     monkeypatch.setattr(gigachat, '_token', 'cached')
@@ -66,7 +68,7 @@ def test_gigachat_retries_only_empty_completion(monkeypatch, reason, calls):
         assert str(request.url) == gigachat.CHAT_URL
         requests.append(request)
         if len(requests) == 1:
-            return httpx.Response(200, json={'choices': [{'message': {'content': ''}, 'finish_reason': reason}]})
+            return httpx.Response(200, json={'choices': [{'message': {'content': first_content}, 'finish_reason': reason}]})
         return httpx.Response(200, json={'choices': [{'message': {'content': '{"description":"Milk\nBread"}'}}]})
 
     real_client = httpx.Client

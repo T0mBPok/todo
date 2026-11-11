@@ -1,6 +1,7 @@
 """GigaChat authentication and HTTPS transport."""
 from base64 import b64decode
 from binascii import Error as Base64Error
+import json
 import ssl
 from functools import lru_cache
 from pathlib import Path
@@ -67,7 +68,7 @@ def access_token(client, rejected_token=None):
         return token
 
 
-def empty_completion(response):
+def retryable_completion(response):
     if not response.is_success:
         return False
     choices = response.json().get('choices')
@@ -75,9 +76,15 @@ def empty_completion(response):
         return True
     choice = choices[0]
     content = choice.get('message', {}).get('content')
-    return choice.get('finish_reason', 'stop') == 'stop' and (
-        content is None or isinstance(content, str) and not content.strip()
-    )
+    if choice.get('finish_reason', 'stop') != 'stop':
+        return False
+    if not isinstance(content, str) or not content.strip():
+        return True
+    try:
+        json.loads(content, strict=False)
+    except json.JSONDecodeError:
+        return True
+    return False
 
 
 def post(payload, timeout):
@@ -90,7 +97,7 @@ def post(payload, timeout):
             started = monotonic()
             response = client.post(CHAT_URL, headers={'Authorization': 'Bearer ' + token}, json=payload)
         remaining = timeout.read - (monotonic() - started)
-        if remaining > 1 and empty_completion(response):
+        if remaining > 1 and retryable_completion(response):
             response = client.post(
                 CHAT_URL, headers={'Authorization': 'Bearer ' + token}, json=payload,
                 timeout=httpx.Timeout(remaining, connect=min(remaining, timeout.connect)),

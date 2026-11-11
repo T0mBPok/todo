@@ -35,12 +35,15 @@ class AIPlanner:
             return original, ''
         parsed = json.loads(data['message']['content'])
         normalized = parsed.get('text')
-        if not isinstance(normalized, str) or not normalized.strip() or len(normalized) > 6500:
+        if not isinstance(normalized, str) or not normalized.strip() or len(normalized) > 6000:
             return original, ''
+        normalized = normalize_transcript(normalized.strip())
         # A language correction must never silently change explicit numeric times.
         times = lambda value: Counter(re.findall(r'(?<!\d)\d{1,2}:\d{2}(?!\d)', value))
         numbers = lambda value: Counter(re.findall(r'\d+', value))
-        if times(original) - times(normalized) or numbers(original) != numbers(normalized):
+        anchors = lambda value: Counter(match.group().casefold() for match in ANCHOR.finditer(value))
+        if (times(original) - times(normalized) or numbers(original) != numbers(normalized)
+                or anchors(original) != anchors(normalized)):
             return original, ''
         details=re.search(r'(?:в\s+описании|описание(?:\s+задачи)?|детали)\s*[:—-]\s*(.+)',original,re.I|re.S)
         if details and details.group(1).strip().lower() not in normalized.lower():
@@ -53,17 +56,23 @@ class AIPlanner:
         prompt_schema = None if config.AI_PROVIDER == 'gigachat' else schema
         instructions = planning_prompt(request.timezone, existing, prompt_schema)
         try:
-            if config.AI_PROVIDER in {'openrouter', 'gigachat'}:
+            if config.AI_PROVIDER == 'openrouter':
                 normalized = normalize_transcript(request.text)
                 instructions += '\nИсправляй очевидные оговорки при извлечении событий и сохраняй исходные даты, время и детали.'
+            elif request._normalized_text is not None:
+                normalized = request._normalized_text
             else:
                 normalized, _ = self.normalize(request.text)
+            original = request._spoken_text or request.text
+            planner_text = normalized + '\nИсходный текст (сохрани все детали для описания): ' + original
+            if request._normalized_text is not None and request.text not in {normalized, original}:
+                planner_text += '\nУточнение из календарного контекста: ' + request.text
             response = ai_post(config.OLLAMA_BASE_URL + '/api/chat', timeout=120,
                 json={'model': config.OLLAMA_MODEL, 'stream': False, 'think': False,
                       'keep_alive': '10m', 'format': schema,
                       'options': {'temperature': 0, 'num_ctx': 8192, 'num_predict': 3000},
                       'messages': [{'role': 'system', 'content': instructions},
-                                   {'role': 'user', 'content': normalized + '\nИсходный текст (сохрани все детали для описания): ' + request.text}]})
+                                   {'role': 'user', 'content': planner_text}]})
             response.raise_for_status()
             data = response.json()
             if data.get('done_reason') == 'length':
@@ -88,27 +97,25 @@ class AIPlanner:
             if not duration_mentioned:
                 for task in parsed.tasks:
                     task.end = task.start + timedelta(hours=1)
-                # Two events on one day linked by "сразу" share their boundary;
-                # an explicitly stated next start determines the unknown duration.
-                if 'сразу' in request.text.lower():
-                    by_day = {}
-                    zone = ZoneInfo(request.timezone)
-                    for task in parsed.tasks:
-                        by_day.setdefault(task.start.astimezone(zone).date(), []).append(task)
-                    for tasks in by_day.values():
-                        if len(tasks) == 2:
-                            first, second = sorted(tasks, key=lambda task: task.start)
-                            if second.start > first.start:
-                                first.end = second.start
-            if not enforce_spoken_time(parsed.tasks, spoken, request.timezone) and spoken != request.text:
-                enforce_spoken_time(parsed.tasks, request.text, request.timezone)
+            enforce_spoken_time(parsed.tasks, normalize_transcript(spoken), request.timezone, normalized)
+            # Linked events share a boundary after their spoken times have been applied.
+            if not duration_mentioned and 'сразу' in request.text.lower():
+                by_day = {}
+                zone = ZoneInfo(request.timezone)
+                for task in parsed.tasks:
+                    by_day.setdefault(task.start.astimezone(zone).date(), []).append(task)
+                for tasks in by_day.values():
+                    if len(tasks) == 2:
+                        first, second = sorted(tasks, key=lambda task: task.start)
+                        if second.start > first.start:
+                            first.end = second.start
             parsed.tasks = apply_spoken_recurrence(parsed.tasks, request.text, request.timezone)
             zone = ZoneInfo(request.timezone)
             summary = '; '.join(f'{task.title}: {task.start.astimezone(zone):%d.%m %H:%M}–{task.end.astimezone(zone):%H:%M}' for task in parsed.tasks)
             note = 'Понял: ' + summary + '.'
             if any(task.recurrence for task in parsed.tasks):
                 note += ' Повторяющиеся события продолжаются без даты окончания.'
-            if normalized != request.text:
+            if normalized != original:
                 note += ' Нормализованный текст: ' + normalized
             if not duration_mentioned:
                 note += ' Без указанной длительности — 60 минут; для связанных задач «сразу после» конец взят из начала следующей.'

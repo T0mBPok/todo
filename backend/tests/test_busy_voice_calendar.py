@@ -92,12 +92,16 @@ def test_context_compaction_preserves_all_targets_and_history():
     assert len(context['events'][44]['description']) == 5000
 
 
-@pytest.mark.parametrize('first,last,end_day', [('18:0', '19:0', 0), ('23:30', '00:15', 1)])
-def test_exact_creation_keeps_local_time_without_model(client, monkeypatch, first, last, end_day):
+@pytest.mark.parametrize('utterance,first,last,end_day', [
+    ('Поставь мне тренировку завтра с 18:0 до 19:0.', '18:00', '19:00', 0),
+    ('Поставь мне тренировку завтра с 23:30 до 00:15.', '23:30', '00:15', 1),
+    ('Поставь на завтра тренировку с восемнадти до 19яна:00.', '18:00', '19:00', 0),
+])
+def test_exact_creation_keeps_local_time_without_model(client, monkeypatch, utterance, first, last, end_day):
     api, _ = client
     monkeypatch.setattr('app.commands.grounded_ai.interpret_calendar', lambda *_: pytest.fail('Unexpected model call'))
     tomorrow = datetime.now(ZONE).date() + timedelta(days=1)
-    response = api.post('/api/commands', json={'text': f'Поставь мне тренировку завтра с {first} до {last}.'})
+    response = api.post('/api/commands', json={'text': utterance})
     assert response.status_code == 200, response.text
     plan = response.json()['plan']
     item = plan['tasks'][0]
@@ -110,3 +114,32 @@ def test_exact_creation_keeps_local_time_without_model(client, monkeypatch, firs
         value = datetime.fromisoformat(actual[key]).astimezone(ZONE)
         hour, minute = map(int, clock.split(':'))
         assert (value.date(), value.hour, value.minute) == (day, hour, minute)
+
+
+@pytest.mark.parametrize('text,hour,weekday', [
+    ('Поставь на завтра созвон на 8:00 утра.', 8, None),
+    ('Поставь созвон на завтра в 8:00 вечера.', 20, None),
+    ('Поставь на завтра созвон на 23:30.', 23, None),
+
+])
+def test_exact_creation_at_single_time_defaults_to_one_hour(client, monkeypatch, text, hour, weekday):
+    api, _ = client
+
+    def unexpected(*args, **kwargs):
+        pytest.fail('An explicit single-time command should not call the model')
+
+    monkeypatch.setattr('app.commands.grounded_ai.interpret_calendar', unexpected)
+    monkeypatch.setattr('app.core.priority.classify_category', unexpected)
+    response = api.post('/api/commands', json={'text': text, 'timezone': 'Asia/Tomsk'})
+    assert response.status_code == 200, response.text
+    plan = response.json()['plan']
+    assert plan['tasks'][0]['title'] == 'Созвон'
+    saved = api.post(f"/api/plans/{plan['id']}/confirm", json={'tasks': plan['tasks']})
+    assert saved.status_code == 200, saved.text
+    event = api.get('/api/tasks').json()[0]
+    start, end = (datetime.fromisoformat(event[key]).astimezone(ZONE) for key in ('start', 'end'))
+    today = datetime.now(ZONE).date()
+    offset = 1 if weekday is None else (weekday - today.weekday()) % 7
+    assert start.date() == today + timedelta(days=offset)
+    assert (start.hour, start.minute) == (hour, 30 if hour == 23 else 0)
+    assert end - start == timedelta(hours=1)

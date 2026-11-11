@@ -1,11 +1,9 @@
-# Сборка распознавания речи на сервере
+# Сборка распознавания речи
 
-Из корня репозитория на Linux-сервере с Docker и Compose:
+В контейнере используется исходный чекпойнт GigaAM v3 e2e CTC и стандартный загрузчик GigaAM. Положите файлы `v3_e2e_ctc.ckpt` и `v3_e2e_ctc_tokenizer.model` в `speech/model-cache/`. Сборка сверяет SHA-256 обоих файлов. Модель не хранится в Git.
+
+На ноутбуке исходные файлы сохранены в `~/.cache/voice-todo/gigaam-sber-2026-11-09/`. Перед сборкой на новом VPS перенесите их в его `speech/model-cache/`.
 
 ```bash
-docker compose up -d --build
+docker compose up -d --build --wait speech
 ```
-
-При первой сборке `speech` скачивает модель GigaAM v3 e2e CTC (~442 МБ), токенизатор и конфигурацию с [официальной публикации ai-sage на Hugging Face](https://huggingface.co/ai-sage/GigaAM-v3/tree/cec030b4c4f35d928e4a9044a3bdb29ebd499fac). Ревизия и SHA-256 файлов закреплены в Dockerfile. Старый CDN GigaAM и файлы из существующих контейнеров для сборки не нужны.
-
-Первая сборка требует доступа к Hugging Face и его файловому CDN, Docker Hub и источникам зависимостей. Запущенный `speech` загружает модель из собранного образа и работает без внешней сети.
