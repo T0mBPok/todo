@@ -62,7 +62,12 @@ scope=occurrence для названной даты или «одно событ
         response=ai_post(config.OLLAMA_BASE_URL+'/api/chat',timeout=180,json={'model':config.OLLAMA_MODEL,'stream':False,'think':False,'keep_alive':'10m','format':schema,'options':{'temperature':0,'num_ctx':16384,'num_predict':2600},'messages':[{'role':'system','content':prompt},{'role':'user','content':json.dumps(payload,ensure_ascii=False)}]})
         response.raise_for_status();data=response.json()
         if data.get('done_reason')=='length':raise HTTPException(502,'Модель не завершила разбор команды. Уточните день или разделите действия.')
-        result=Decision.model_validate_json(data['message']['content'])
+        value = json.loads(data['message']['content'])
+        if isinstance(value, dict) and value.get('intent') == 'create' and not replacement and not value.get('operations'):
+            # Standalone creation is parsed again by the planner. Ignore the
+            # provisional events here so an unused field cannot abort it.
+            value['new_events'] = []
+        result = Decision.model_validate(value)
         allowed={event['ref'] for event in context['events']}
         selected=[ref for op in result.operations for ref in op.refs]
         if any(ref not in allowed for ref in selected+result.keep_refs):raise HTTPException(502,'Модель выбрала событие вне календарного контекста. Календарь не изменён.')

@@ -1,6 +1,6 @@
 """Resolve explicit date anchors in speech independently of model arithmetic."""
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from fastapi import HTTPException
 from zoneinfo import ZoneInfo
 
@@ -30,6 +30,45 @@ def explicit_weekday_date(tail, today):
         except ValueError as error:
             raise HTTPException(422, 'Уточните месяц для указанного числа.') from error
     return target, match.end()
+
+CLOCK = r'(?<![\d:])(?:[01]?\d|2[0-3]):[0-5]\d(?![\d:])'
+TIME_RANGE = re.compile(rf'\b(?:с\s+)?({CLOCK})(?:\s+до\s+|\s*[-–—]\s*)({CLOCK})', re.I)
+START_TIME = re.compile(rf'\b(?:в|во)\s+({CLOCK})', re.I)
+DETAIL_MARKER = re.compile(r'\b(?:в\s+описании|описание(?:\s+задачи)?|детали)\s*[:—-]', re.I)
+
+
+def enforce_spoken_time(tasks, text, timezone_name):
+    """Apply a single unambiguous numeric time in the user's timezone."""
+    if len(tasks) != 1:
+        return False
+    scheduling_text = DETAIL_MARKER.split(text, maxsplit=1)[0]
+    clocks = re.findall(CLOCK, scheduling_text)
+    interval = TIME_RANGE.search(scheduling_text) if len(clocks) == 2 else None
+    start_only = START_TIME.search(scheduling_text) if len(clocks) == 1 else None
+    if not interval and not start_only:
+        return False
+
+    task = tasks[0]
+    zone = ZoneInfo(timezone_name)
+    local_day = task.start.astimezone(zone).date()
+
+    def on_day(value, day):
+        hour, minute = map(int, value.split(':'))
+        return datetime(day.year, day.month, day.day, hour, minute, tzinfo=zone)
+
+    start = on_day((interval or start_only)[1], local_day)
+    if interval:
+        end = on_day(interval[2], local_day)
+        if end == start:
+            raise HTTPException(422, 'Начало и конец совпадают. Уточните время окончания.')
+        if end < start:
+            end += timedelta(days=1)
+        task.end = end.astimezone(timezone.utc)
+    else:
+        task.end = start.astimezone(timezone.utc) + (task.end - task.start)
+    task.start = start.astimezone(timezone.utc)
+    return True
+
 
 STOP = {'потом','после','сразу','будет','меня','университете','завтра','сегодня','него'}
 

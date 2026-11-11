@@ -42,7 +42,9 @@ class CommandService:
         decision=interpret_calendar(request,context)
         if decision.intent=='clarify':raise HTTPException(422,decision.note)
         if decision.intent=='create':
-            plan=PlanService(self.session).create(PlanRequest(text=decision.create_text or request.text,timezone=request.timezone))
+            plan_request = PlanRequest(text=decision.create_text or request.text, timezone=request.timezone)
+            plan_request._spoken_text = request.text
+            plan = PlanService(self.session).create(plan_request)
             value=PlanRead.model_validate(plan)
             marker=' Нормализованный текст: '
             value.normalized_text=plan.note.split(marker,1)[1].split(' Без указанной длительности',1)[0] if marker in plan.note else request.text

@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.core import config
 from app.plans.schemas import PlanOutput
 from app.tasks.schemas import TaskInput
-from app.plans.dates import enforce_date_context
+from app.plans.dates import ANCHOR, TIME_RANGE, enforce_date_context, enforce_spoken_time
 from app.recurrences.speech import apply_spoken_recurrence
 from app.plans.prompts import planning_prompt, normalize_transcript, normalization_prompt
 
@@ -50,7 +50,8 @@ class AIPlanner:
     def generate(self, request, existing):
         schema = ExtractedPlan.model_json_schema()
         schema['$defs']['TaskInput'].setdefault('required',[]).append('category')
-        instructions = planning_prompt(request.timezone, existing, schema)
+        prompt_schema = None if config.AI_PROVIDER == 'gigachat' else schema
+        instructions = planning_prompt(request.timezone, existing, prompt_schema)
         try:
             if config.AI_PROVIDER in {'openrouter', 'gigachat'}:
                 normalized = normalize_transcript(request.text)
@@ -74,10 +75,16 @@ class AIPlanner:
             detail=re.search(r'(?:в\s+описании|описание(?:\s+задачи)?|детали)\s*[:—-]\s*(.+)',request.text,re.I|re.S)
             if len(parsed.tasks)==1 and detail:
                 parsed.tasks[0].description=detail.group(1).strip()[:5000]
-            parsed.tasks = enforce_date_context(parsed.tasks, request.text, request.timezone)
+            spoken = request._spoken_text or request.text
+            date_source = spoken if ANCHOR.search(spoken) else request.text
+            parsed.tasks = enforce_date_context(parsed.tasks, date_source, request.timezone)
             # The small model can copy example durations. Apply the documented
             # default in code when the user supplied no duration or end time.
-            duration_mentioned = re.search(r'\b(?:час\w*|минут\w*|секунд\w*|полчаса|полтора|полторы|до)\b', request.text, re.IGNORECASE)
+            duration_mentioned = (
+                TIME_RANGE.search(spoken) or TIME_RANGE.search(request.text)
+                or re.search(r'\b(?:час\w*|минут\w*|секунд\w*|полчаса|полтора|полторы|до)\b',
+                             spoken + ' ' + request.text, re.IGNORECASE)
+            )
             if not duration_mentioned:
                 for task in parsed.tasks:
                     task.end = task.start + timedelta(hours=1)
@@ -93,6 +100,8 @@ class AIPlanner:
                             first, second = sorted(tasks, key=lambda task: task.start)
                             if second.start > first.start:
                                 first.end = second.start
+            if not enforce_spoken_time(parsed.tasks, spoken, request.timezone) and spoken != request.text:
+                enforce_spoken_time(parsed.tasks, request.text, request.timezone)
             parsed.tasks = apply_spoken_recurrence(parsed.tasks, request.text, request.timezone)
             zone = ZoneInfo(request.timezone)
             summary = '; '.join(f'{task.title}: {task.start.astimezone(zone):%d.%m %H:%M}–{task.end.astimezone(zone):%H:%M}' for task in parsed.tasks)
@@ -114,7 +123,7 @@ class AIPlanner:
         except httpx.RequestError as error:
             raise HTTPException(503, 'Нет связи с Ollama. Запустите Ollama в WSL.') from error
         except (ValueError, KeyError, TypeError) as error:
-            raise HTTPException(502, 'Qwen вернула некорректный план. Уточните запрос.') from error
+            raise HTTPException(502, 'Модель вернула некорректный план. Уточните запрос.') from error
 
 def model_status():
     if config.AI_PROVIDER == 'gigachat':

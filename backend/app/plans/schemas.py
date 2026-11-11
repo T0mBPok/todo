@@ -1,12 +1,13 @@
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
 from app.tasks.schemas import TaskInput
 
 class PlanRequest(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     text: str = Field(min_length=1, max_length=6000)
     timezone: str = 'Asia/Tomsk'
+    _spoken_text: str | None = PrivateAttr(default=None)
 
     @field_validator('timezone')
     @classmethod
