@@ -38,7 +38,8 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       EMAIL_CODE_KEY: ${EMAIL_CODE_KEY:-}
-      SPEECH_URL: http://speech:8001
+      SPEECH_URL: ${SPEECH_URL-http://speech:8001}
+      SPEECH_LOCAL_FALLBACK: ${SPEECH_LOCAL_FALLBACK:-1}
       DB_HOST: db
       DB_NAME: ${POSTGRES_DB:-todo}
       DB_USER: ${POSTGRES_USER:-todo}

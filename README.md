@@ -204,3 +204,5 @@ API списка: /api/todos; разбор голоса: /api/todos/commands/pre
 выполнение: /api/todos/commands/{id}/execute. Данные хранятся в PostgreSQL, миграция 0004.
 
 Настройка аккаунтов, обмена с Google и публичного сервера описана в [SECURITY_AND_GOOGLE.md](SECURITY_AND_GOOGLE.md).
+
+Развёртывание на VPS описано в [DEPLOY.md](DEPLOY.md).

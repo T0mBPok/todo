@@ -38,9 +38,17 @@ def whisper_transcribe(audio: bytes):
 
 
 def transcribe_audio(audio: bytes):
-    started=perf_counter()
+    started = perf_counter()
+    speech_url = os.getenv('SPEECH_URL', 'http://speech:8001').rstrip('/')
+    use_fallback = os.getenv('SPEECH_LOCAL_FALLBACK', '1') == '1'
+    if not speech_url:
+        if not use_fallback:
+            raise HTTPException(503, 'Распознавание речи отключено на сервере. Введите команду текстом.')
+        result = whisper_transcribe(audio)
+        result['seconds'] = round(perf_counter() - started, 2)
+        return result
     try:
-        response=httpx.post(os.getenv('SPEECH_URL','http://speech:8001')+'/transcribe',
+        response=httpx.post(speech_url+'/transcribe',
             content=audio,headers={'Content-Type':'application/octet-stream'},timeout=120)
         if response.status_code in (413,415,422):
             raise HTTPException(response.status_code,response.json().get('detail','Проверьте запись.'))
@@ -50,6 +58,8 @@ def transcribe_audio(audio: bytes):
             raise ValueError('Empty GigaAM response')
         return result
     except (httpx.HTTPError, ValueError):
+        if not use_fallback:
+            raise HTTPException(503, 'Сервис распознавания речи недоступен. Попробуйте позже или введите команду текстом.') from None
         logging.getLogger(__name__).warning('GigaAM unavailable, using local Whisper',exc_info=True)
         result=whisper_transcribe(audio)
         result['seconds']=round(perf_counter()-started,2)
