@@ -37,3 +37,12 @@ class Choice(BaseModel):
     scope: Literal['occurrence','series']|None=None
 class Execute(BaseModel):
     choices: list[Choice]=Field(min_length=1,max_length=30)
+
+
+class ClearSeriesChoice(BaseModel):
+    series_id: UUID
+    scope: Literal['occurrence', 'series']
+
+
+class ClearCalendar(BaseModel):
+    choices: list[ClearSeriesChoice] = Field(default_factory=list)

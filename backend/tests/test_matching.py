@@ -34,7 +34,7 @@ def test_delete_all_except_keeps_protected_task_other_day_and_future_repetitions
     assert len(command['operations'])==1
     op=command['operations'][0]
     assert op['requires_confirmation'] and op['candidates'][0]['id']==removed['id']
-    result=api.post('/api/commands/'+command['id']+'/execute',json={'choices':[{'candidate':0}]})
+    result=api.post('/api/commands/'+command['id']+'/execute',json={'choices':[{'candidate':0,'scope':'occurrence'}]})
     assert result.status_code==200,result.text
     items=api.get('/api/tasks',params={'start':'2197-10-14T00:00:00Z','end':'2197-10-30T00:00:00Z'}).json()
     assert any(t['id']==kept['id'] for t in items)

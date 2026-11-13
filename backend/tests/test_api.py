@@ -149,6 +149,7 @@ def test_gigaam_response_metadata(monkeypatch):
     assert transcribe_audio(b'audio')['engine']=='GigaAM v3'
 
 def test_gigaam_failure_uses_local_fallback(monkeypatch):
+    monkeypatch.setenv('SPEECH_LOCAL_FALLBACK', '1')
     import httpx
     from app.voice.service import transcribe_audio
     def offline(*args,**kwargs):

@@ -1,10 +1,46 @@
 from datetime import datetime,timedelta
+import re
 from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 from app.plans.dates import ANCHOR,resolve_anchor
 from app.plans.prompts import date_context
 from app.tasks.schemas import TaskRead
-from app.recurrences.service import instances
+from app.recurrences.service import instances, next_occurrence
+from app.commands.matching import CHANGES_EXISTING, score_name, tokens
+
+BROAD = re.compile(r'\b(?:кроме|остальн\w*|вс[её]\s+(?:задачи|события|мероприятия))\b', re.I)
+REFERENCE = re.compile(r'\b(?:это|этот|эту|этого|е[её]|его)\b', re.I)
+MOVE = re.compile(r'\b(?:перенес|перенёс|перенос|сдвин|передвин|перестав)\w*\b', re.I)
+
+
+def targeted_rows(request, rows):
+    if not CHANGES_EXISTING.search(request.text) or BROAD.search(request.text):
+        return None
+    terms = [word for word in tokens(request.text)
+             if word.isalpha() and not CHANGES_EXISTING.fullmatch(word) and not ANCHOR.fullmatch(word)]
+    named = [row for row in rows if any(score_name(term, row.title) for term in terms)]
+    if named:
+        return named
+    if request.context_task_id and REFERENCE.search(request.text):
+        return [row for row in rows if row.id == request.context_task_id]
+    return None
+
+
+def targeted_occurrences(task, request, explicit_windows, now, excluded):
+    if task.id == request.context_task_id and request.context_occurrence_start:
+        chosen = request.context_occurrence_start
+        if not explicit_windows or MOVE.search(request.text) or any(start <= chosen < end for start, end in explicit_windows):
+            selected = next((pair for pair in instances(task, chosen, chosen + timedelta(microseconds=1), excluded)
+                             if pair[0] == chosen), None)
+            if selected:
+                return [selected]
+    if explicit_windows:
+        matches = {pair for start, end in explicit_windows for pair in instances(task, start, end, excluded)
+                   if start <= pair[0] < end}
+        if matches or not MOVE.search(request.text):
+            return matches
+    occurrence = next_occurrence(task, now, excluded) or next_occurrence(task, task.start, excluded)
+    return [occurrence] if occurrence else []
 
 def calendar_context(request,service):
     zone=ZoneInfo(request.timezone);now=datetime.now(zone)
@@ -19,12 +55,18 @@ def calendar_context(request,service):
         if day:
             start=datetime.combine(day,datetime.min.time(),zone);explicit_windows.append((start,start+timedelta(days=1)))
     if explicit_windows:windows=explicit_windows
+    rows = service.dao.list()
+    targets = targeted_rows(request, rows)
     exceptions=service.recurrences.exceptions();values={};series=[];catalogue=[]
-    for task in service.dao.list():
+    for task in rows if targets is None else targets:
         catalogue.append({'id':str(task.id),'title':task.title,'start':task.start.astimezone(zone).isoformat(),'recurrence':task.recurrence})
         if task.recurrence:
             series.append({'id':str(task.id),'title':task.title,'description':task.description,'anchor':task.start.astimezone(zone).isoformat(),'recurrence':task.recurrence})
-            pairs=set(pair for start,end in windows for pair in instances(task,start,end,exceptions.get(task.id,set())))
+            excluded = exceptions.get(task.id, set())
+            if targets is None:
+                pairs = {pair for start, end in windows for pair in instances(task, start, end, excluded)}
+            else:
+                pairs = targeted_occurrences(task, request, explicit_windows, now, excluded)
         else:
             relevant=not explicit_windows or any(task.start<end and task.end>start for start,end in windows)
             pairs={(task.start,task.end)} if relevant else set()

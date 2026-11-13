@@ -34,7 +34,7 @@ def explicit_weekday_date(tail, today):
 
 CLOCK = r'(?<![\d:])(?:[01]?\d|2[0-3]):[0-5]\d(?![\d:])'
 TIME_RANGE = re.compile(rf'\b(?:с\s+)?({CLOCK})(?:\s+до\s+|\s*[-–—]\s*)({CLOCK})', re.I)
-START_TIME = re.compile(rf'\b(?:в|во|на)\s+({CLOCK})', re.I)
+START_TIME = re.compile(rf'\b(?:в|во|на|к)\s+({CLOCK})', re.I)
 SHORT_CLOCK = re.compile(r'(?<![\d:])([01]?\d|2[0-3]):([0-5]?\d)(?![\d:])')
 COMPACT_RANGE_END = re.compile(rf'({CLOCK}\s+до\s+)([01]\d|2[0-3])([0-5]\d)\b(?![.:]\d)', re.I)
 
@@ -48,14 +48,29 @@ DETAIL_MARKER = re.compile(r'\b(?:в\s+описании|описание(?:\s+з
 
 
 DURATION = re.compile(r'\b(?:час\w*|минут\w*|секунд\w*|полчаса|полтора|полторы)\b', re.I)
+EXPLICIT_DURATION = re.compile(
+    r'\bна\s+(?:(\d{1,4}(?:[,.]\d{1,2})?)\s+)?(час(?:а|ов)?|минут(?:у|ы)?|секунд(?:у|ы)?)\b', re.I,
+)
+
+
+def spoken_duration(clause):
+    match = EXPLICIT_DURATION.search(clause)
+    if not match:
+        return None
+    value = float((match[1] or '1').replace(',', '.'))
+    unit = match[2].casefold()
+    seconds = 3600 if unit.startswith('час') else 60 if unit.startswith('минут') else 1
+    return timedelta(seconds=value * seconds) if value else None
 SENTENCE_BREAK = re.compile(r'\.(?!\d)|[!?;]')
 CLAUSE_BREAK = re.compile(r',\s*|\s+(?:и|а|потом|затем)\s+', re.I)
 
 
 def spoken_slots(text):
-    scheduling_text = normalize_clock_minutes(DETAIL_MARKER.split(text, maxsplit=1)[0])
-    for sentence in SENTENCE_BREAK.split(scheduling_text):
+    for sentence in SENTENCE_BREAK.split(normalize_clock_minutes(text)):
+        sentence = DETAIL_MARKER.split(sentence, maxsplit=1)[0]
         clock_count = len(re.findall(CLOCK, sentence))
+        if clock_count > 1 and re.search(r'\b(?:ой[,\s]+нет|точнее|пардон)\b', sentence, re.I):
+            continue
         single_slot_size = 2 if TIME_RANGE.search(sentence) else 1
         clauses = CLAUSE_BREAK.split(sentence) if clock_count > single_slot_size else [sentence]
         for clause in clauses:
@@ -106,7 +121,9 @@ def enforce_spoken_time(tasks, text, timezone_name, *alternatives):
                     end += timedelta(days=1)
                 task.end = end.astimezone(timezone.utc)
             else:
-                duration = task.end - task.start if DURATION.search(clause) else timedelta(hours=1)
+                duration = spoken_duration(clause)
+                if duration is None:
+                    duration = task.end - task.start if DURATION.search(clause) else timedelta(hours=1)
                 task.end = start.astimezone(timezone.utc) + duration
             task.start = start.astimezone(timezone.utc)
             resolved.add(index)
@@ -115,7 +132,8 @@ def enforce_spoken_time(tasks, text, timezone_name, *alternatives):
         expected = Counter(first for _, first, _ in fully_timed)
         actual = Counter(task.start.astimezone(zone).strftime('%H:%M') for task in tasks)
         if expected != actual:
-            raise HTTPException(422, 'Не удалось сопоставить время с каждым событием. Назовите событие и его время отдельной фразой.')
+            return set(range(len(tasks))) - resolved
+    return set()
 
 
 STOP = {'потом','после','сразу','будет','меня','университете','завтра','сегодня','него'}

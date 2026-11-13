@@ -1,6 +1,6 @@
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, PrivateAttr, field_validator
 from app.tasks.schemas import TaskInput
 
 class PlanRequest(BaseModel):
@@ -19,10 +19,25 @@ class PlanRequest(BaseModel):
             raise ValueError('Неизвестный часовой пояс')
         return value
 
+class PlanCheck(BaseModel):
+    task_index: int = Field(ge=0, lt=30)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class PlanOption(BaseModel):
+    start: AwareDatetime
+    end: AwareDatetime
+
+
+class PlanReview(PlanCheck):
+    options: list[PlanOption] = Field(default_factory=list)
+
+
 class PlanOutput(BaseModel):
     tasks: list[TaskInput] = Field(min_length=1, max_length=30)
     note: str
     normalized_text: str = ''
+    review: list[PlanReview] = Field(default_factory=list)
 
 class PlanRead(PlanOutput):
     model_config = ConfigDict(from_attributes=True)

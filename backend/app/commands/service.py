@@ -6,8 +6,9 @@ from sqlalchemy import select
 from fastapi import HTTPException
 from app.commands.models import Command
 from app.commands.dao import CommandDAO
+from app.commands.calendar_clear import ENTITY as CALENDAR_CLEAR, is_calendar_clear, prepare_clear
 from app.commands.ai import interpret
-from app.commands.matching import deletion_request, exact_title, score_name, timed_creation, timed_deletion, tokens
+from app.commands.matching import deletion_request, exact_title, explicit_calendar_add, score_name, timed_creation, timed_deletion, tokens
 from app.commands.recurrence import existing_recurrence
 from app.tasks.models import Task
 from app.tasks.schemas import TaskRead,TaskInput
@@ -41,17 +42,23 @@ class CommandService:
     def __init__(self,session):
         self.session=session;self.tasks=TaskService(session);self.dao=CommandDAO(session)
     def prepare(self,request):
+        if is_calendar_clear(request.text):
+            return prepare_clear(self.session, request.text)
         from app.commands.context import calendar_context
         from app.commands.grounded_ai import Decision, SelectedOperation, interpret_calendar
         from app.commands.schemas import Operation
+        from app.plans.colloquial_time import resolve_colloquial_ranges
         from app.plans.dates import ANCHOR
 
         zone = ZoneInfo(request.timezone)
         today = datetime.now(zone).date()
         explicit_days = {anchor(match.group(), today) for match in ANCHOR.finditer(request.text)}
         from app.plans.prompts import normalize_transcript
-        normalized_command = normalize_transcript(request.text)
-        exact_create = timed_creation(normalized_command)
+        time_reviews = []
+        normalized_command = normalize_transcript(
+            resolve_colloquial_ranges(request.text, request.timezone, reviews=time_reviews)
+        )
+        exact_create = None if time_reviews else timed_creation(normalized_command)
         if exact_create:
             day_word, title, first, last = exact_create
             day = anchor(day_word, today)
@@ -89,10 +96,13 @@ class CommandService:
                                 operations=[SelectedOperation(action='delete', refs=list(mapping), scope='occurrence')])
         else:
             if config.AI_PROVIDER == 'gigachat':
-                normalized_command, _ = AIPlanner().normalize(request.text)
-            context, mapping = calendar_context(request, self.tasks)
-            model_request = request.model_copy(update={'text': normalized_command})
-            decision = interpret_calendar(model_request, context)
+                normalized_command, _ = AIPlanner().normalize(normalized_command)
+            if len(request.text) > 750 and explicit_calendar_add(request.text):
+                decision = Decision(intent='create', note='')
+            else:
+                context, mapping = calendar_context(request, self.tasks)
+                model_request = request.model_copy(update={'text': normalized_command})
+                decision = interpret_calendar(model_request, context)
         if decision.intent=='clarify':raise HTTPException(422,decision.note)
         if decision.intent=='create':
             plan_request = PlanRequest(text=decision.create_text or normalized_command, timezone=request.timezone)
@@ -104,6 +114,8 @@ class CommandService:
             marker=' Нормализованный текст: '
             value.normalized_text=plan.note.split(marker,1)[1].split(' Без указанной длительности',1)[0] if marker in plan.note else request.text
             return {'kind':'plan','plan':value}
+        if time_reviews:
+            raise HTTPException(422, time_reviews[0].message)
         if 'кроме' in request.text.lower() and any(action.action=='delete' for action in decision.operations) and not decision.keep_refs:
             raise HTTPException(422,'Модель не определила, какие события сохранить. Календарь не изменён; уточните исключение.')
         append = re.fullmatch(r'\s*добавь\s+в\s+описание\s+([^:;.!?]+):\s*(.+)', request.text, re.I | re.S)
@@ -136,9 +148,12 @@ class CommandService:
                     changes['append_description'] = True
                 if action.action=='update' and not any(changes.get(k) is not None for k in ('new_title','description','new_time','new_date_reference','duration_minutes','new_recurrence')):
                     raise HTTPException(422,'Не определено, что изменить в выбранной задаче.')
+                recurring = any(candidate.recurrence or candidate.series_parent_id for candidate in candidates)
+                if recurring:
+                    changes['scope'] = 'unspecified'
                 instruction=Operation(operation=action.action,target=candidates[0].title,**changes)
                 operations.append({'instruction':instruction.model_dump(),'timezone':request.timezone,'candidates':[task.model_dump(mode='json') for task in candidates],
-                    'requires_confirmation':action.selection=='all' or bool(decision.keep_refs)})
+                    'requires_confirmation':recurring or action.selection=='all' or bool(decision.keep_refs)})
         if decision.new_events:
             from app.plans.dates import enforce_date_context
             additions=enforce_date_context(decision.new_events,request.text,request.timezone)
@@ -234,6 +249,8 @@ class CommandService:
         calendar_lock(self.session)
         command=self.dao.locked(command_id)
         if not command: raise HTTPException(404,'Команда не найдена.')
+        if any(op.get('entity') == CALENDAR_CLEAR for op in command.operations):
+            raise HTTPException(422, 'Для очистки календаря требуется отдельное подтверждение.')
         if any(op.get('entity') in {'todo','balance'} for op in command.operations):raise HTTPException(404,'Используйте соответствующий раздел для этой команды.')
         if command.status=='executed': return command.result
         if len(data.choices)!=len(command.operations): raise HTTPException(422,'Выберите задачу для каждого действия.')
@@ -250,7 +267,7 @@ class CommandService:
                     created=self.tasks.dao.add(creation);self.session.flush()
                     results.append(TaskRead.model_validate(created).model_dump(mode='json'))
                     continue
-                requested_scope=choice.scope or (op['scope'] if op['scope']!='unspecified' else None)
+                requested_scope=choice.scope
                 root_id=snapshot.series_parent_id or snapshot.id
                 if op['operation']=='delete' and requested_scope=='series' and root_id in deleted_series:continue
                 task=self.tasks.require(snapshot.id)
@@ -262,7 +279,7 @@ class CommandService:
                     if not valid or valid[0]!=(snapshot.start,snapshot.end): raise HTTPException(409,'Это повторение уже изменилось. Повторите команду.')
                 recurring=bool(task.recurrence or task.series_parent_id)
                 scope=choice.scope or (op['scope'] if op['scope']!='unspecified' else None)
-                if recurring and scope is None: raise HTTPException(422,'Выберите одно событие или всю серию.')
+                if recurring and choice.scope is None: raise HTTPException(422,'Выберите одно событие или всю серию.')
                 if op['operation']=='delete':
                     self.tasks.delete(task.id,scope,snapshot.occurrence_start,commit_changes=False)
                     if scope=='series':deleted_series.add(root_id)

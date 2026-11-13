@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 
 const source = (await readFile(new URL('../src/features/voice/useVoiceInput.js', import.meta.url), 'utf8'))
   .replace("import { ref, onUnmounted } from 'vue'", "const ref = value => ({ value }); const onUnmounted = fn => {}")
+  .replace("'../../shared/api'", JSON.stringify(new URL('../src/shared/api.js', import.meta.url).href))
 const { useVoiceInput } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'))
 function setup({ denied = false } = {}) {
   let stopped = 0, recorder, completed = 0, error = '', posted = 0

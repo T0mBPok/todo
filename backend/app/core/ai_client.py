@@ -1,13 +1,23 @@
 """Shared transport. All domain modules keep their existing schemas and validation."""
 import json as jsonlib
+from time import perf_counter
 from urllib.parse import urlsplit
 import httpx
 from fastapi import HTTPException
 from app.core import config, gigachat
+from app.core.request_logging import log_dependency
 
-def ai_post(url,*,timeout,json):
+def ai_post(url, *, timeout, json, operation='completion'):
+    started = perf_counter()
     if config.AI_PROVIDER=='ollama':
-        return httpx.post(url,timeout=timeout,json=json)
+        try:
+            response = httpx.post(url,timeout=timeout,json=json)
+        except httpx.RequestError as error:
+            log_dependency('ollama', operation, started, outcome=type(error).__name__)
+            raise
+        log_dependency('ollama', operation, started, response.status_code,
+                       'http_error' if response.is_error else 'ok')
+        return response
     official=config.AI_PROVIDER=='dashscope'
     is_gigachat = config.AI_PROVIDER == 'gigachat'
     provider, setting = {
@@ -17,6 +27,7 @@ def ai_post(url,*,timeout,json):
     }[config.AI_PROVIDER]
     key = getattr(config, setting)
     if not key:
+        log_dependency(config.AI_PROVIDER, operation, started, outcome='missing_config')
         raise HTTPException(503,f'Для {provider} не задан {setting} в настройках бэкенда.')
     endpoint='https://openrouter.ai/api/v1/chat/completions'
     if official:
@@ -53,7 +64,8 @@ def ai_post(url,*,timeout,json):
     if response_format is not None:
         payload['response_format'] = response_format
     if is_gigachat:
-        timeout = httpx.Timeout(min(timeout, 15), connect=min(timeout, 4))
+        read_limit = 22 if operation == 'calendar_plan' and payload['max_tokens'] > 3000 else 15
+        timeout = httpx.Timeout(min(timeout, read_limit), connect=min(timeout, 4))
     elif official:payload['enable_thinking']=False
     else:
         payload['provider'] = {'require_parameters': True}
@@ -61,12 +73,16 @@ def ai_post(url,*,timeout,json):
             payload['reasoning'] = {'enabled': False}
         # Cloud requests should fail promptly when a free endpoint stalls.
         timeout = httpx.Timeout(min(timeout, 12), connect=min(timeout, 3))
+    status = None
+    stage = 'transport'
     try:
         if is_gigachat:
             response = gigachat.post(payload, timeout)
         else:
             response=httpx.post(endpoint,timeout=timeout,
                 headers={'Authorization':'Bearer '+key},json=payload)
+        status = response.status_code
+        stage = 'http_error'
         if official and response.status_code == 403:
             try:
                 body=response.json()
@@ -81,26 +97,41 @@ def ai_post(url,*,timeout,json):
         if response.status_code==429:raise HTTPException(429,f'Достигнут лимит {provider}. Подождите или проверьте дневную квоту.')
         if response.status_code in (400,404):raise HTTPException(503,f'Модель {provider} недоступна или не поддерживает выбранный формат JSON. Проверьте модель и регион API.')
         if response.is_error:raise HTTPException(502,f'Ошибка провайдера {provider}. Повторите запрос позже.')
+        stage = 'response_json'
         value=response.json()
-        if value.get('error'):raise HTTPException(502,f'{provider} не завершил запрос. Повторите позже.')
+        if value.get('error'):
+            stage = 'provider_error'
+            raise HTTPException(502,f'{provider} не завершил запрос. Повторите позже.')
         choices = value.get('choices') or []
         choice = choices[0] if choices else {}
         if is_gigachat and choice.get('finish_reason') == 'blacklist':
+            stage = 'blocked'
             raise HTTPException(422, 'GigaChat отклонил формулировку. Попробуйте сказать иначе.')
         content = choice.get('message', {}).get('content')
         if not isinstance(content,str) or not content.strip():
+            stage = 'empty_completion'
             if is_gigachat:
                 raise HTTPException(502, 'GigaChat не вернул результат. Попробуйте повторить команду.')
             raise HTTPException(502,f'{provider} вернул пустой ответ.')
         if is_gigachat and choice.get('finish_reason') != 'length':
             # GigaChat can emit literal newlines in JSON strings such as shopping lists.
             # Re-encode the parsed value; domain validators still check the actual fields.
+            stage = 'completion_json'
             parsed = jsonlib.loads(content, strict=False)
             content = jsonlib.dumps(parsed, ensure_ascii=False, separators=(',', ':'))
+        log_dependency(config.AI_PROVIDER, operation, started, status,
+                       'truncated' if choice.get('finish_reason') == 'length' else 'ok')
         return httpx.Response(200,request=httpx.Request('POST','http://ai.internal/result'),json={'message':{'content':content},'done_reason':choice.get('finish_reason','stop')})
+    except HTTPException:
+        log_dependency(config.AI_PROVIDER, operation, started, status, stage)
+        raise
     except httpx.TimeoutException:
+        log_dependency(config.AI_PROVIDER, operation, started, status, 'timeout')
         raise HTTPException(504,f'{provider} не ответил вовремя. Попробуйте сократить запрос.') from None
-    except httpx.RequestError:
+    except httpx.RequestError as error:
+        log_dependency(config.AI_PROVIDER, operation, started, status, type(error).__name__)
         raise HTTPException(503,f'Нет связи с {provider}. Проверьте доступ сервера в интернет.') from None
     except (ValueError,KeyError,IndexError,TypeError,AttributeError):
+        log_dependency(config.AI_PROVIDER, operation, started, status,
+                       'invalid_response' if status is None else stage)
         raise HTTPException(502,f'{provider} вернул некорректный ответ. Календарь не изменён.') from None

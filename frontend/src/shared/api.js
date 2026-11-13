@@ -3,14 +3,18 @@ export async function request(path, method = 'GET', body) {
     method, headers: { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body)
   })
+  return readApiResponse(response)
+}
+export async function readApiResponse(response, fallback = 'Ошибка запроса к серверу.') {
   if (response.status === 204) return null
-  const result = await response.json()
-  if (!response.ok) {
-    const error = new Error(typeof result.detail === 'string' ? result.detail : 'Проверьте введённые данные.')
-    error.status = response.status
-    throw error
-  }
-  return result
+  if (response.ok) return response.json()
+  const result = await response.json().catch(() => null)
+  const message = typeof result?.detail === 'string' ? result.detail : fallback
+  const id = response.headers.get('X-Request-ID')
+  const error = new Error(id ? `${message} Код запроса: ${id}` : message)
+  error.status = response.status
+  error.detail = message
+  throw error
 }
 export function localDate(value) {
   const date = new Date(value)

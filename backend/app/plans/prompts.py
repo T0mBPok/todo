@@ -26,6 +26,8 @@ def normalize_transcript(text):
                     (r'\bполторы\s+минуты\b', '90 секунд')]
     for pattern, replacement in replacements:
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    text = re.sub(r'\bв[оа]лей\s*бол', lambda match: 'Волейбол' if match[0][0].isupper() else 'волейбол', text, flags=re.I)
+    text = re.sub(r'\bтренеровк', lambda match: 'Тренировк' if match[0][0].isupper() else 'тренировк', text, flags=re.I)
     text = re.sub(r'(?<![\d-])([01]?\d|2[0-3])[-–]([0-5]\d)(?![\d-])', r'\1:\2', text)
     # GigaAM occasionally mixes written hours and stray syllables in a single
     # range. Repair known forms only when both endpoints are identifiable.
@@ -60,8 +62,10 @@ def planning_prompt(timezone, existing, schema, now=None):
         'Без дня используй сегодня, для уже прошедшего времени — завтра; для «на днях» — ближайший свободный день. '
         'Без времени найди свободное будущее окно 09:00–18:00. '
         'Не допускай пересечений свободно назначаемых задач. Явно заданное время не сдвигай. '
-        'needs_clarification=false при любой понятной задаче. '
-        'needs_clarification=true только если вообще нет понятных действий или событий. '
+        'Даже при неоднозначности сохрани все понятные события. Для каждого верни полностью заполненный вариант с началом и концом. '
+        'Если пришлось предположить дату, время, длительность, название или смысл оговорки, добавь в review объект {task_index, reason}: task_index — индекс задачи в tasks с нуля, reason — конкретно что проверить. '
+        'Не помечай обычную длительность в 60 минут, если начало задано явно и пользователь не сомневается. '
+        'Если всё понятно, review=[] и needs_clarification=false. Только при отсутствии понятных событий верни tasks=[] и needs_clarification=true. '
         'В note кратко напиши «Понял: …», нормализованный смысл, предположения и пропуски. '
         '\nПРИМЕР: «Завтра в час 15 пару университ на 90 минут. Потом что с кресельем». '
         'Результат: ОДНА задача «Пара в университете» на ' + tomorrow

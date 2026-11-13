@@ -43,9 +43,12 @@ def test_timed_delete_keeps_other_times_days_and_repetitions(client, monkeypatch
     assert result.status_code == 200, result.text
     command = result.json()
     assert len(command['operations']) == 1
-    assert command['operations'][0]['instruction']['scope'] == 'occurrence'
+    assert command['operations'][0]['instruction']['scope'] == 'unspecified'
+    assert command['operations'][0]['requires_confirmation']
     assert [c['id'] for c in command['operations'][0]['candidates']] == [str(target.id)]
-    deleted = api.post(f"/api/commands/{command['id']}/execute", json={'choices': [{'candidate': 0}]})
+    path = f"/api/commands/{command['id']}/execute"
+    assert api.post(path, json={'choices': [{'candidate': 0}]}).status_code == 422
+    deleted = api.post(path, json={'choices': [{'candidate': 0, 'scope': 'occurrence'}]})
     assert deleted.status_code == 200, deleted.text
     events = api.get('/api/tasks', params={'start': (start - timedelta(hours=1)).isoformat(),
                                          'end': (start + timedelta(days=8)).isoformat()}).json()

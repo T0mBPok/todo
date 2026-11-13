@@ -1,4 +1,5 @@
 from app.core.ai_client import ai_post
+from app.core.request_logging import log_result_rejection
 import json
 import httpx
 from fastapi import HTTPException
@@ -34,7 +35,7 @@ def analyze(context):
     prompt+='\nФормат assessments — объект: каждому ключу из source_events.ref соответствует {flexibility, reason}. Обязательно оцени КАЖДОЕ событие, включая те, которые останутся на месте. moves — отдельный массив выбранных переносов.'
     if len(json.dumps(context,ensure_ascii=False))>42000:raise HTTPException(422,'Для анализа слишком много данных. Уменьшите горизонт или описание пожеланий.')
     try:
-        response=ai_post(config.OLLAMA_BASE_URL+'/api/chat',timeout=180,json={'model':config.OLLAMA_MODEL,'stream':False,'think':False,'keep_alive':'10m','format':schema,'options':{'temperature':0,'num_ctx':16384,'num_predict':2600},'messages':[{'role':'system','content':prompt},{'role':'user','content':json.dumps(context,ensure_ascii=False)}]})
+        response=ai_post(config.OLLAMA_BASE_URL+'/api/chat',timeout=180,operation='schedule_analysis',json={'model':config.OLLAMA_MODEL,'stream':False,'think':False,'keep_alive':'10m','format':schema,'options':{'temperature':0,'num_ctx':16384,'num_predict':2600},'messages':[{'role':'system','content':prompt},{'role':'user','content':json.dumps(context,ensure_ascii=False)}]})
         response.raise_for_status();data=response.json()
         if data.get('done_reason')=='length':raise HTTPException(502,'Модель не завершила анализ. Уменьшите горизонт планирования.')
         value=json.loads(data['message']['content'])
@@ -43,4 +44,6 @@ def analyze(context):
         return Decision.model_validate(value)
     except httpx.TimeoutException as e:raise HTTPException(504,'Локальная модель не успела проанализировать нагрузку. Повторите запрос.') from e
     except httpx.RequestError as e:raise HTTPException(503,'Нет связи с локальной моделью.') from e
-    except (httpx.HTTPStatusError,ValueError,KeyError,TypeError) as e:raise HTTPException(502,'Модель вернула некорректное предложение. Календарь не изменён.') from e
+    except (httpx.HTTPStatusError,ValueError,KeyError,TypeError) as e:
+        log_result_rejection('schedule_analysis', 'invalid_schema')
+        raise HTTPException(502,'Модель вернула некорректное предложение. Календарь не изменён.') from e

@@ -6,13 +6,14 @@ import ssl
 from functools import lru_cache
 from pathlib import Path
 from threading import Lock
-from time import monotonic, time
+from time import monotonic, perf_counter, time
 from uuid import uuid4
 
 import httpx
 from fastapi import HTTPException
 
 from app.core import config
+from app.core.request_logging import log_dependency
 
 TOKEN_URL = 'https://ngw.devices.sberbank.ru:9443/api/v2/oauth'
 CHAT_URL = 'https://api.giga.chat/v1/chat/completions'
@@ -44,12 +45,15 @@ def access_token(client, rejected_token=None):
     with _token_lock:
         if _token and _token != rejected_token and time() + 30 < _expires:
             return _token
+        started = perf_counter()
         response = client.post(
             TOKEN_URL,
             headers={'Authorization': 'Basic ' + authorization_key(), 'RqUID': str(uuid4())},
             data={'scope': 'GIGACHAT_API_PERS'},
             timeout=httpx.Timeout(8, connect=4),
         )
+        log_dependency('gigachat', 'oauth', started, response.status_code,
+                       'http_error' if response.is_error else 'ok')
         if response.status_code in (400, 401, 403):
             raise HTTPException(503, 'GigaChat отклонил ключ авторизации. Проверьте GIGACHAT_AUTH_KEY.')
         if response.status_code == 429:
@@ -98,6 +102,7 @@ def post(payload, timeout):
             response = client.post(CHAT_URL, headers={'Authorization': 'Bearer ' + token}, json=payload)
         remaining = timeout.read - (monotonic() - started)
         if remaining > 1 and retryable_completion(response):
+            log_dependency('gigachat', 'completion_retry', started, response.status_code, 'invalid_completion')
             response = client.post(
                 CHAT_URL, headers={'Authorization': 'Bearer ' + token}, json=payload,
                 timeout=httpx.Timeout(remaining, connect=min(remaining, timeout.connect)),

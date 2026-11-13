@@ -7,7 +7,8 @@ class PlanDAO:
 
     def add(self, request, result):
         plan = Plan(text=request.text, timezone=request.timezone,
-                    tasks=[task.model_dump(mode='json') for task in result.tasks], note=result.note)
+                    tasks=[task.model_dump(mode='json') for task in result.tasks],
+                    review=[item.model_dump(mode='json') for item in result.review], note=result.note)
         self.session.add(plan)
         return plan
 

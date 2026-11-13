@@ -1,4 +1,5 @@
 import { ref, onUnmounted } from 'vue'
+import { readApiResponse } from '../../shared/api'
 
 export function useVoiceInput({ text, onComplete, onError }) {
   const supported = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder)
@@ -25,8 +26,7 @@ export function useVoiceInput({ text, onComplete, onError }) {
       const response = await fetch('/api/voice/transcribe', {
         method: 'POST', body: audio, headers: { 'Content-Type': mime }, signal: request.signal
       })
-      const result = await response.json()
-      if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : 'Ошибка распознавания аудио.')
+      const result = await readApiResponse(response, 'Ошибка распознавания аудио.')
       if (disposed || cancelled) return
       rawTranscript.value = result.text
       engineName.value = result.engine || 'Локальный движок'
@@ -57,7 +57,7 @@ export function useVoiceInput({ text, onComplete, onError }) {
     } catch (error) {
       release()
       const messages = {
-        NotAllowedError: 'Доступ к микрофону запрещён. Разрешите микрофон для localhost в настройках браузера.',
+        NotAllowedError: 'Доступ к микрофону запрещён. Разрешите микрофон для этого сайта в настройках браузера.',
         NotFoundError: 'Микрофон не найден. Подключите его и повторите запись.',
         NotReadableError: 'Не удаётся открыть микрофон. Проверьте, не занят ли он другим приложением.'
       }

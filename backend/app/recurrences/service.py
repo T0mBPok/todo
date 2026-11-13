@@ -115,6 +115,27 @@ def validate_conflicts(candidates,existing,exceptions):
                 raise HTTPException(409,f'«{candidate.title}» пересекается с «{other.title}» ({begin:%d.%m.%Y %H:%M}'+(' и последующие повторения' if rule_of(other) else '')+'). Если нужно повторять существующую задачу, скажите «сделай её повторяющейся», либо выберите другое время.')
         checked.append(candidate)
 
+def next_occurrence(task, after, excluded=frozenset()):
+    rule = rule_of(task)
+    lower = max(task.start, after)
+    if rule['frequency'] != 'google':
+        upper = max([lower, *excluded]) + timedelta(days=8)
+        return next((pair for pair in instances(task, lower, upper, excluded) if pair[0] >= after), None)
+
+    zone = ZoneInfo(rule['timezone'])
+    offset = wall_offset(google_anchor(rule, task.start), task.start, zone)
+    source_lower = shift_occurrence(lower, -offset, zone) - timedelta(days=1) if offset else lower
+    if task.is_all_day:
+        source_lower = source_lower.astimezone(UTC).replace(tzinfo=None)
+    schedule = google_schedule(rule, task.start, task.is_all_day)
+    for candidate in schedule.xafter(source_lower, inc=True):
+        candidate = candidate.replace(tzinfo=UTC) if task.is_all_day else candidate.astimezone(UTC)
+        start = shift_occurrence(candidate, offset, zone)
+        if start >= after and start not in excluded:
+            return start, start + (task.end - task.start)
+    return None
+
+
 def require_occurrence(task,start):
     for value, finish in instances(task,start,start+timedelta(seconds=1)):
         if value == start:

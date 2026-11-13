@@ -25,6 +25,11 @@ services:
       start_period: 30s
   backend:
     build: ./backend
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:5173}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}

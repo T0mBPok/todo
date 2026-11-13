@@ -9,9 +9,12 @@ PAYLOAD={'model':'qwen-local','format':{'type':'object','properties':{'ok':{'typ
 def test_local_provider_never_sends_cloud_key(monkeypatch):
     monkeypatch.setattr(config,'AI_PROVIDER','ollama');monkeypatch.setattr(config,'OPENROUTER_API_KEY','secret-test')
     captured={}
-    def post(url,**kwargs):captured.update(url=url,**kwargs);return 'local-response'
+    response = httpx.Response(200)
+    def post(url, **kwargs):
+        captured.update(url=url, **kwargs)
+        return response
     monkeypatch.setattr(httpx,'post',post)
-    assert ai_post('http://ollama:11434/api/chat',timeout=10,json=PAYLOAD)=='local-response'
+    assert ai_post('http://ollama:11434/api/chat',timeout=10,json=PAYLOAD) is response
     assert captured['url']=='http://ollama:11434/api/chat' and 'headers' not in captured and captured['json']==PAYLOAD
 
 def remote(monkeypatch):

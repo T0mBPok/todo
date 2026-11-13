@@ -85,6 +85,20 @@ def timed_creation(text):
     return match['day'], title, match['start'], match['end']
 
 
+_ADD_TO_CALENDAR = re.compile(
+    r'\b(?:добавь|закинь|запиши|внеси|поставь|запланируй)(?:те)?\b[^.!?\n]{0,65}\bв\s+календар(?:ь|ик)\b', re.I,
+)
+CHANGES_EXISTING = re.compile(
+    r'\b(?:снес\w*|сотр\w*|стер\w*|удал\w*|убер\w*|убра\w*|перенес\w*|перенёс\w*|перенос\w*|измени\w*|отмени\w*|'
+    r'замени\w*|сдвин\w*|поменя\w*|передвин\w*|переимен\w*|вместо|(?:добавь|запиши)\s+в\s+описание|сделай\s+\S+\s+повторяющ\w*)\b',
+    re.I,
+)
+
+
+def explicit_calendar_add(text):
+    return bool(_ADD_TO_CALENDAR.search(text[:150]) and not CHANGES_EXISTING.search(text))
+
+
 def exact_title(target, title):
     def normalized(value):
         return ['тренировка' if word in {'тренировку', 'тренировки', 'тренировке'} else word
