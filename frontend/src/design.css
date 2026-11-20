@@ -312,13 +312,15 @@ input:focus,select:focus,textarea:focus { border-color:#c9ab98; }
 }
 
 /* Soft panel movement and animated menu controls. */
-.app-content { transition:grid-template-columns .24s cubic-bezier(.2,.8,.2,1),gap .24s; }
-.app-content.sidebar-collapsed { grid-template-columns:0px minmax(0,1fr); gap:0; }
-.calendar-with-suggestions { grid-column:2; }
-.calendar-sidebar { min-width:0; }
-.sidebar-enter-active,.sidebar-leave-active { transition:opacity .2s,transform .24s cubic-bezier(.2,.8,.2,1); overflow:hidden; }
-.sidebar-enter-from,.sidebar-leave-to { opacity:0; transform:translateX(-18px); }
-.sidebar-scrim { display:none; }
+.app-content,.app-content.sidebar-collapsed { position:relative; grid-template-columns:minmax(0,1fr); gap:0; transition:none; }
+
+.calendar-with-suggestions { grid-column:1; }
+.calendar-sidebar { position:absolute; top:0; bottom:24px; left:24px; width:224px; z-index:12; min-width:0; padding:18px; border:1px solid var(--line); border-radius:12px; background:var(--paper); box-shadow:0 8px 30px #231e281c; }
+.sidebar-enter-active,.sidebar-leave-active { transition:opacity .16s,transform .2s cubic-bezier(.2,.8,.2,1); will-change:transform,opacity; }
+.sidebar-enter-from,.sidebar-leave-to { opacity:0; transform:translate3d(-28px,0,0); }
+.sidebar-scrim { display:block; position:absolute; inset:0 0 0 248px; z-index:11; padding:0; background:transparent; }
+.sidebar-shade-enter-active,.sidebar-shade-leave-active { transition:opacity .16s; }
+.sidebar-shade-enter-from,.sidebar-shade-leave-to { opacity:0; }
 .workspace-header .menu-button { display:grid; place-items:center; transition:background .18s,color .18s; }
 .workspace-header .menu-button[aria-expanded=true] { background:#f5e5d8; color:var(--ember); }
 .assistant-trigger[aria-expanded=true] { background:#f5e5d8; border-color:#d3ad95; color:var(--ember); }
@@ -332,9 +334,15 @@ input:focus,select:focus,textarea:focus { border-color:#c9ab98; }
   .sidebar-scrim { display:block; position:absolute; inset:0 0 0 248px; border-radius:12px; background:#231e2826; z-index:11; padding:0; }
   .sidebar-shade-enter-active,.sidebar-shade-leave-active { transition:opacity .2s; }
   .sidebar-shade-enter-from,.sidebar-shade-leave-to { opacity:0; }
-  .calendar-sidebar { transition:none; }
+  .calendar-sidebar { left:8px; bottom:8px; width:240px; transition:none; }
 }
 @media(prefers-reduced-motion:reduce) {
   .app-content,.sidebar-enter-active,.sidebar-leave-active,.sidebar-shade-enter-active,.sidebar-shade-leave-active { transition:none; }
   .assistant-drawer::backdrop { animation:none!important; }
+}
+
+@media(min-width:1200px) {
+  .app-content,.app-content.sidebar-collapsed { padding-inline:32px; }
+  .calendar-sidebar { left:32px; }
+  .sidebar-scrim { left:256px; }
 }
