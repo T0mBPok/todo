@@ -1,12 +1,13 @@
 <script setup>
 const props=defineProps({refreshToken:{type:Number,default:0}})
-import { onMounted, ref, computed, watch, nextTick } from 'vue'
+import { onMounted, ref, computed, watch } from 'vue'
 import { confirmPlan } from './entities/plans/api'
 import { listTasks } from './entities/tasks/api'
 import { request, localDate } from './shared/api'
 import { dateKey, fromKey, addDays, monthDays, moveDate, visibleRange } from './shared/calendar'
 import MicIcon from './features/voice/MicIcon.vue'
 import { useVoiceInput } from './features/voice/useVoiceInput'
+import AssistantDrawer from './features/voice/AssistantDrawer.vue'
 import PlanEditor from './entities/plans/PlanEditor.vue'
 import TaskCalendar from './entities/tasks/TaskCalendar.vue'
 import BalanceSuggestions from './features/balance/BalanceSuggestions.vue'
@@ -20,27 +21,28 @@ const clearReady = computed(() => clearCalendarDraft.value &&
 const text = ref(''), message = ref(''), plan = ref(null), tasks = ref([]), busy = ref(false), aiReady = ref(null)
 const lastTranscript = ref(''), normalizedText = ref(''), savedTasks = ref([])
 const autoSave = ref(true), modelName = ref('qwen3.5:4b'), aiProvider=ref(null)
-const voiceOpen=ref(false), view=ref('week'), calendar=ref(null), sidebarOpen=ref(window.innerWidth>=760)
-const quickMode=ref(false), quickTrigger=ref(null)
-const voiceDialog=ref(null), voiceTrigger=ref(null)
-watch(voiceOpen,async open=>{ await nextTick(); if(open) voiceDialog.value?.focus(); else (quickMode.value?quickTrigger.value:voiceTrigger.value)?.focus() })
-function trapVoiceFocus(event) {
-  if(event.key!=='Tab') return
-  const nodes=[...voiceDialog.value.querySelectorAll('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),audio,summary')].filter(node=>node.offsetParent!==null)
-  const first=nodes[0],last=nodes[nodes.length-1]
-  if(event.shiftKey && (document.activeElement===first || document.activeElement===voiceDialog.value)) { event.preventDefault(); last?.focus() }
-  else if(!event.shiftKey && document.activeElement===last) { event.preventDefault(); first?.focus() }
-}
+const voiceOpen=ref(false), view=ref(window.innerWidth < 760 ? 'day' : 'week'), calendar=ref(null), sidebarOpen=ref(false)
+const assistantTab = ref('voice')
+const quickMode=ref(false)
+const voiceTrigger=ref(null)
 const day = ref(localDate(new Date()).slice(0,10))
 const monthLabel=computed(()=>fromKey(day.value).toLocaleDateString('ru-RU',{month:'long',year:'numeric'}))
 const miniDays=computed(()=>monthDays(fromKey(day.value)))
 const todayKey=dateKey(new Date())
 function navigate(amount) { day.value=moveDate(day.value,amount,view.value) }
 function miniMonth(amount) { day.value=moveDate(day.value,amount,'month') }
-function closeVoice() { if(!busy.value && !listening.value && !processing.value && !starting.value) voiceOpen.value=false }
+function selectCalendarDay(value) {
+  day.value = value
+  if (window.innerWidth < 760) sidebarOpen.value = false
+}
+function createCalendarEvent() {
+  calendar.value?.add()
+  if (window.innerWidth < 760) sidebarOpen.value = false
+}
+function closeVoice() { quickMode.value=true; voiceOpen.value=false }
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
 const { supported, listening, processing, starting, toggle, cancel, audioUrl, rawTranscript, engineName, elapsed, recordSeconds } = useVoiceInput({ text, onComplete: () => generate(true), onError: showVoiceError })
-function showVoiceError(value) { message.value=value; voiceOpen.value=true }
+function showVoiceError(value) { message.value=value; assistantTab.value='voice'; voiceOpen.value=true }
 async function quickMic() {
   if(busy.value || processing.value || starting.value) return
   if(!supported) {showVoiceError('Запись недоступна в этом браузере. Можно ввести текст.');return}
@@ -49,9 +51,15 @@ async function quickMic() {
   await toggle()
 }
 function cancelQuick() { cancel();text.value='';message.value='Запись отменена. Задачи не добавлены.' }
+async function recordWithCalendar() {
+  await quickMic()
+  if (listening.value) voiceOpen.value = false
+}
+const taskRange = ref(null)
+function updateTaskRange(range) { taskRange.value = range }
 let refreshVersion=0
-async function refresh() { const version=++refreshVersion; const result=await listTasks(visibleRange(day.value,view.value)); if(version===refreshVersion) tasks.value=result }
-watch([day,view],()=>refreshSafely())
+async function refresh() { const version=++refreshVersion; const result=await listTasks(taskRange.value || visibleRange(day.value,view.value)); if(version===refreshVersion) tasks.value=result }
+watch(taskRange,()=>refreshSafely())
 async function refreshSafely() { try { await refresh() } catch (error) { message.value = error.message } }
 function readyCommand() {
   return command.value && choices.value.every((c,i)=>c.candidate!==null && (command.value.operations[i].instruction.operation==='create' || !(command.value.operations[i].candidates[c.candidate].recurrence || command.value.operations[i].candidates[c.candidate].series_parent_id) || c.scope))
@@ -165,7 +173,7 @@ async function generate(fromVoice = false) {
   if(plan.value && /^(отмена|отмени|не надо)[.! ]*$/.test(lower)) {plan.value=null;text.value='';message.value='План отменён.';return}
   normalizedText.value='';savedTasks.value=[];busy.value=true;plan.value=null;message.value='Разбираю команду…'
   try {
-    const range=visibleRange(day.value,view.value)
+    const range=calendar.value?.getVisibleRange() || visibleRange(day.value,view.value)
     const response=await request('/commands','POST',{text:utterance,timezone,context_task_id:contextTask.value?.id||null,context_occurrence_start:contextTask.value?.occurrence_start||null,calendar_start:range.start,calendar_end:range.end,history:commandHistory.value})
     commandHistory.value=[...commandHistory.value,{role:'user',text:utterance.slice(0,1500)},{role:'assistant',text:(response.note||response.plan?.note||'').slice(0,1500)}].slice(-8)
     if (response.kind === 'calendar_clear') {
@@ -213,32 +221,35 @@ watch(()=>props.refreshToken,()=>refreshSafely())
   <div class="calendar-app">
     <header class="app-toolbar">
       <button class="icon-button menu-button" aria-label="Показать или скрыть боковую панель" @click="sidebarOpen=!sidebarOpen">☰</button>
-      <div class="calendar-section-label">ПЛАН / 01</div>
+      <div class="calendar-section-label">ТВОЁ ВРЕМЯ</div>
       <button class="outline-button today-button" @click="day=todayKey">Сегодня</button>
       <div class="navigation-arrows"><button class="icon-button" aria-label="Предыдущий период" @click="navigate(-1)">‹</button><button class="icon-button" aria-label="Следующий период" @click="navigate(1)">›</button></div>
       <h1 class="period-title">{{ monthLabel }}</h1>
       <div class="toolbar-spacer"></div>
-      <button ref="quickTrigger" :class="['quick-record-button',{'is-recording':listening}]" :aria-label="listening?'Завершить быструю запись':'Начать быструю запись'" :title="listening?'Остановить запись':'Записать голосом, не закрывая календарь'" :disabled="busy||processing||starting" @click="quickMic"><span v-if="listening" class="quick-stop-symbol">■</span><MicIcon v-else /><span>{{ listening?'Стоп':processing?'Распознаю…':starting?'Микрофон…':busy?'Обрабатываю…':'Говорить' }}</span></button>
-      <button ref="voiceTrigger" class="voice-toolbar-button" aria-label="Открыть голосовую запись" @click="voiceOpen=true"><MicIcon /><span>Панель голоса</span></button>
-      <select v-model="view" class="view-select" aria-label="Вид календаря"><option value="day">День</option><option value="week">Неделя</option><option value="month">Месяц</option></select>
-      
+      <button ref="voiceTrigger" class="assistant-trigger" aria-label="Открыть меню ИИ" :aria-expanded="voiceOpen" @click="voiceOpen=true"><span aria-hidden="true">☰</span><span>Помощник</span><i></i></button>
+      <select v-model="view" class="view-select" aria-label="Вид календаря"><option value="day">День</option><option value="three">3 дня</option><option value="week">Неделя</option><option value="month">Месяц</option></select>
     </header>
     <div :class="['app-content',{'sidebar-collapsed':!sidebarOpen}]">
       <aside v-if="sidebarOpen" class="calendar-sidebar">
-        <p class="sidebar-kicker">РАБОЧАЯ ОБЛАСТЬ</p><button class="create-button" @click="calendar?.add()"><span>＋</span>Создать</button>
-        <section class="mini-calendar"><div class="mini-heading"><b>{{ monthLabel }}</b><div><button class="icon-button" aria-label="Предыдущий месяц" @click="miniMonth(-1)">‹</button><button class="icon-button" aria-label="Следующий месяц" @click="miniMonth(1)">›</button></div></div><div class="mini-weekdays"><span v-for="(w,i) in ['П','В','С','Ч','П','С','В']" :key="i">{{ w }}</span></div><div class="mini-days"><button v-for="d in miniDays" :key="dateKey(d)" :class="{'muted':d.getMonth()!==fromKey(day).getMonth(),'selected':dateKey(d)===day,'today':dateKey(d)===todayKey}" @click="day=dateKey(d)">{{ d.getDate() }}</button></div></section>
+        <p class="sidebar-kicker">РАБОЧАЯ ОБЛАСТЬ</p><button class="create-button" @click="createCalendarEvent"><span>＋</span>Событие</button>
+        <section class="mini-calendar"><div class="mini-heading"><b>{{ monthLabel }}</b><div><button class="icon-button" aria-label="Предыдущий месяц" @click="miniMonth(-1)">‹</button><button class="icon-button" aria-label="Следующий месяц" @click="miniMonth(1)">›</button></div></div><div class="mini-weekdays"><span v-for="(w,i) in ['П','В','С','Ч','П','С','В']" :key="i">{{ w }}</span></div><div class="mini-days"><button v-for="d in miniDays" :key="dateKey(d)" :class="{'muted':d.getMonth()!==fromKey(day).getMonth(),'selected':dateKey(d)===day,'today':dateKey(d)===todayKey}" @click="selectCalendarDay(dateKey(d))">{{ d.getDate() }}</button></div></section>
         <div class="sidebar-section"><h2>Мои календари <span>⌃</span></h2><div class="calendar-label"><span class="calendar-checkbox">✓</span>Мои задачи</div></div>
-        <div class="voice-sidebar-card"><div class="voice-small-icon"><MicIcon /></div><h3>Голосовая заметка</h3><p>Расскажи о делах.<br>Они появятся в календаре.</p><button @click="voiceOpen=true">Сделать запись <span>→</span></button></div>
 
-        <div v-if="aiProvider" class="impulse-provider" :title="modelName"><i aria-hidden="true"></i>{{ aiProvider==='dashscope'?'Qwen · Alibaba Cloud':aiProvider==='openrouter'?'ИИ · OpenRouter':aiProvider==='gigachat'?'ИИ · GigaChat':'Qwen · локальный' }}</div>
       </aside>
-      <div class="calendar-with-suggestions"><TaskCalendar ref="calendar" :tasks="tasks" v-model:day="day" :view="view" @select-task="contextTask=$event" @view-day="view='day'" @refresh="refreshSafely" @error="message=$event;voiceOpen=true" /><BalanceSuggestions :tasks="tasks" @applied="message=$event;refreshSafely()" /></div>
+      <div class="calendar-with-suggestions"><TaskCalendar ref="calendar" :tasks="tasks" v-model:day="day" :view="view" @range-change="updateTaskRange" @select-task="contextTask=$event" @view-day="view='day'" @refresh="refreshSafely" @error="message=$event;voiceOpen=true" /></div>
     </div>
     <div v-if="message && !voiceOpen && !listening && !processing && !starting && !busy" class="calendar-toast" role="status"><span>{{ message }}</span><button aria-label="Закрыть сообщение" @click="message=''">×</button></div>
     <div v-if="!voiceOpen && (listening||starting||processing||busy)" class="quick-voice-bar" role="status" aria-live="polite"><span :class="['quick-status-dot',{'recording':listening}]"></span><div><strong>{{ listening?'Идёт запись · '+recordSeconds+' с':starting?'Подключаю микрофон…':processing?'Распознаю речь…':'Обрабатываю команду…' }}</strong><small>{{ listening?'Календарь перед глазами. Нажми «Стоп», когда закончишь.':'Можно продолжать смотреть календарь' }}</small></div><button v-if="listening" class="quick-finish" @click="quickMic">Стоп</button><button v-if="listening||starting" class="icon-button" aria-label="Отменить быструю запись" @click="cancelQuick">×</button><button class="quick-details" @click="voiceOpen=true">Панель</button></div>
-    <div v-show="voiceOpen" class="voice-backdrop" @click.self="closeVoice"><section ref="voiceDialog" tabindex="-1" class="voice-window" role="dialog" @keydown="trapVoiceFocus" aria-modal="true" aria-labelledby="voice-title" @keydown.esc="closeVoice">
-      <div class="voice-window-heading"><div class="voice-title-icon"><MicIcon /></div><div><h2 id="voice-title">Управление голосом</h2><p>Добавляй, изменяй и удаляй задачи</p></div><button class="icon-button" aria-label="Закрыть голосовое окно" :disabled="busy||listening||processing||starting" @click="closeVoice">×</button></div>
-      <div class="voice-window-body">
+    <AssistantDrawer :open="voiceOpen" title="Помощник" @close="closeVoice">
+      <nav class="assistant-tabs" aria-label="Действия с ИИ">
+        <button :class="{active:assistantTab==='voice'}" @click="assistantTab='voice'">Голос и команды</button>
+        <button :class="{active:assistantTab==='balance'}" @click="assistantTab='balance'">Разгрузить день</button>
+      </nav>
+      <BalanceSuggestions v-if="voiceOpen && assistantTab==='balance'" :tasks="tasks" @applied="message=$event;refreshSafely()" />
+      <div v-show="assistantTab==='voice'" class="voice-window-body">
+        <div class="assistant-quick-actions">
+          <button class="primary-button" :disabled="busy||processing||starting" @click="recordWithCalendar"><MicIcon />Записать, глядя на календарь</button>
+        </div>
         <div v-if="aiReady===false" class="notice">ИИ не настроен или недоступен. Проверь настройки выбранного провайдера.</div>
         <button :class="['record-main-button',{'recording':listening}]" :disabled="!supported||busy||processing||starting" @click="mic"><span class="mic-symbol"><template v-if="listening">■</template><MicIcon v-else /></span><b>{{ processing?'Распознаю речь…':starting?'Подключаю микрофон…':listening?'Завершить запись':'Нажми и говори' }}</b><small>{{ listening?recordSeconds+' с · до 90 секунд':'Например: «Каждый вторник в 18:00 тренировка»' }}</small></button>
         <button v-if="listening||starting||processing" class="cancel-record-button panel-cancel-record" @click="cancelQuick">× Отменить запись</button>
@@ -273,8 +284,7 @@ watch(()=>props.refreshToken,()=>refreshSafely())
         <section v-if="savedTasks.length" class="saved-results"><h3>Результат: {{ savedTasks.length }}</h3><article v-for="task in savedTasks" :key="task.id" class="saved-event"><span class="saved-check">✓</span><div><strong>{{ task.title }}<span v-if="task.recurrence" class="repeat-badge"> ↻ {{ task.recurrence.frequency==='weekly'?'Каждую неделю':'Каждый день' }}</span></strong><small>{{ displayTime(task.start) }} — {{ displayTime(task.end) }}</small><p v-if="task.description">{{ task.description }}</p></div></article><button class="outline-button" @click="closeVoice">Посмотреть в календаре</button></section>
         <section v-if="command" class="preview command-review"><h3>Подтверждение команды</h3><p>{{ command.note }}</p><p>Можно сказать «первый вариант», «только это событие», «всю серию», «подтверждаю» или «отмена».</p><article v-for="(op,i) in command.operations" :key="i" class="draft"><h4>{{ op.instruction.operation==='create'?'Добавить':op.instruction.operation==='delete'?'Удалить':'Изменить' }}: {{ op.instruction.target || 'Выбранная задача' }}</h4><label v-for="(candidate,n) in op.candidates" :key="candidate.occurrence_id||candidate.id"><input type="radio" :name="'candidate-'+i" v-model="choices[i].candidate" :value="n">{{ n+1 }}. {{ candidate.title }} · {{ displayTime(candidate.start) }}</label><p v-if="op.instruction.new_recurrence">Повторение: {{ op.instruction.new_recurrence==='weekly'?'каждую неделю':'каждый день' }} · без окончания. Дата, время и описание сохраняются.</p><p v-if="op.instruction.new_title">Название: {{ op.instruction.new_title }}</p><p v-if="op.instruction.new_time || op.instruction.new_date_reference">Новое время: {{ op.instruction.new_date_reference }} {{ op.instruction.new_time }}</p><p v-if="op.instruction.description!==null">{{ op.instruction.append_description?'Добавить в описание':'Описание' }}: {{ op.instruction.description }}</p><fieldset v-if="op.instruction.operation!=='create' && choices[i].candidate!==null && (op.candidates[choices[i].candidate].recurrence || op.candidates[choices[i].candidate].series_parent_id)"><legend>Какие повторения?</legend><label><input type="radio" v-model="choices[i].scope" value="occurrence">Только это событие</label><label><input type="radio" v-model="choices[i].scope" value="series">Вся серия</label></fieldset></article><button class="primary-button" :disabled="busy || !readyCommand()" @click="executeCommand">Подтвердить</button><button class="outline-button" :disabled="busy" @click="command=null;text='';message='Команда отменена.'">Отмена</button></section>
         <PlanEditor v-if="plan&&!busy" ref="planEditor" :key="plan.id" :plan="plan" @saved="savedFromPreview" @error="message=$event" />
-      </div><div class="voice-window-footer"><span class="local-dot"></span>Локальное распознавание · без облачных сервисов</div>
-    </section></div>
+      </div></AssistantDrawer>
   </div>
 </template>
 

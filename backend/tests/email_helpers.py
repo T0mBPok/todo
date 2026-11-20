@@ -7,7 +7,7 @@ from app.users import email_verification, router
 def capture_mail(monkeypatch):
     inbox = {}
     monkeypatch.setattr(config, 'EMAIL_CODE_KEY', 'a' * 64)
-    monkeypatch.setattr(email_verification, 'send_code', lambda address, code: inbox.update({address: code}))
+    monkeypatch.setattr(email_verification, 'send_code', lambda address, code, purpose='verify': inbox.update({address: code}))
     test_ip = str(uuid4())
     monkeypatch.setattr(router, 'client_ip', lambda _: test_ip)
     return inbox

@@ -9,7 +9,7 @@ export function monthDays(value) { const d = new Date(value); d.setDate(1); cons
 export function moveDate(key, amount, view) {
   const d = fromKey(key)
   if (view === 'month') { const day=d.getDate(); d.setDate(1); d.setMonth(d.getMonth()+amount); d.setDate(Math.min(day,new Date(d.getFullYear(),d.getMonth()+1,0).getDate())) }
-  else d.setDate(d.getDate() + amount*(view==='week'?7:1))
+  else d.setDate(d.getDate() + amount*(view==='week'?7:view==='three'?3:1))
   return dateKey(d)
 }
 export function eventsOnDay(tasks, day) {
@@ -59,6 +59,6 @@ export function positionedEvents(tasks, day) {
 export function visibleRange(day, view) {
   const selected=fromKey(day)
   const first=view==='month'?monthDays(selected)[0]:view==='week'?weekStart(selected):selected
-  const last=addDays(first,view==='month'?42:view==='week'?7:1)
+  const last=addDays(first,view==='month'?42:view==='week'?7:view==='three'?3:1)
   return {start:first.toISOString(),end:last.toISOString()}
 }

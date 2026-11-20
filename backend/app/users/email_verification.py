@@ -21,14 +21,15 @@ def code_digest(challenge_id, code):
     return hmac.new(key, f'{challenge_id}:{code}'.encode(), hashlib.sha256).hexdigest()
 
 
-def send_code(address, code):
+def send_code(address, code, purpose='verify'):
     if not config.SMTP_HOST or not config.SMTP_FROM:
         raise HTTPException(503, 'Отправка кодов ещё не настроена.')
     message = EmailMessage()
     message['From'] = config.SMTP_FROM
     message['To'] = address
-    message['Subject'] = 'Импульс — код подтверждения почты'
-    message.set_content(f'Код подтверждения: {code}\n\nКод действует 10 минут. Если вы не запрашивали код, проигнорируйте письмо.')
+    action = 'восстановления пароля' if purpose == 'password_reset' else 'подтверждения почты'
+    message['Subject'] = f'Импульс — код {action}'
+    message.set_content(f'Код {action}: {code}\n\nКод действует 10 минут. Если вы не запрашивали код, проигнорируйте письмо.')
     context = ssl.create_default_context()
     try:
         if config.SMTP_TLS == 'implicit':
@@ -51,15 +52,16 @@ def rotate_code(challenge, now):
     challenge.code_expires = min(now + timedelta(minutes=10), challenge.expires)
     challenge.resend_after = now + timedelta(seconds=60)
     challenge.attempts_left = 5
-    send_code(challenge.email, code)
+    if challenge.purpose != 'password_reset' or challenge.user_id is not None:
+        send_code(challenge.email, code, challenge.purpose or 'verify')
 
 
-def issue_challenge(email, password_hash=None, user_id=None):
+def issue_challenge(email, password_hash=None, user_id=None, purpose='verify'):
     now = datetime.now(timezone.utc)
     token = secrets.token_urlsafe(32)
     challenge = EmailChallenge(
         id=hashlib.sha256(token.encode()).hexdigest(), email=email, password_hash=password_hash,
-        user_id=user_id, expires=now + timedelta(minutes=30),
+        user_id=user_id, purpose=purpose, expires=now + timedelta(minutes=30),
     )
     with SessionLocal.begin() as db:
         db.execute(delete(EmailChallenge).where(EmailChallenge.expires < now))

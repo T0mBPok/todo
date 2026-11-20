@@ -24,6 +24,7 @@ class EmailChallenge(Base):
     email: Mapped[str] = mapped_column(String(254))
     password_hash: Mapped[str | None] = mapped_column(Text)
     user_id: Mapped[UUID | None] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), index=True)
+    purpose: Mapped[str] = mapped_column(String(20), default='verify', server_default='verify')
     code_hash: Mapped[str] = mapped_column(String(64))
     expires: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     code_expires: Mapped[datetime] = mapped_column(DateTime(timezone=True))

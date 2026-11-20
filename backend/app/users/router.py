@@ -12,7 +12,7 @@ from app.core import config
 from app.core.database import SessionLocal
 from app.users.email_verification import code_digest, issue_challenge, rotate_code
 from app.users.models import EmailChallenge, LoginSession, RateBucket, User
-from app.users.schemas import ChallengeInput, CodeInput, Credentials
+from app.users.schemas import ChallengeInput, CodeInput, Credentials, ResetPassword, ResetRequest
 
 router = APIRouter(prefix='/auth', tags=['auth'])
 passwords = PasswordHasher()
@@ -85,9 +85,9 @@ def register(data: Credentials, request: Request):
     return issue_challenge(data.email, password_hash=passwords.hash(data.password))
 
 
-def locked_challenge(db, token, now):
+def locked_challenge(db, token, now, purpose='verify'):
     challenge = db.scalar(select(EmailChallenge).where(EmailChallenge.id == digest(token)).with_for_update())
-    if challenge is None or challenge.expires <= now:
+    if challenge is None or challenge.expires <= now or challenge.purpose != purpose:
         raise HTTPException(410, 'Подтверждение истекло. Начните заново.')
     return challenge
 
@@ -142,12 +142,57 @@ def client_ip(request):
     return request.client.host if request.client else 'unknown'
 
 
+@router.post('/request-password-reset', status_code=202)
+def request_password_reset(data: ResetRequest, request: Request):
+    throttle('password-reset-ip', client_ip(request), 10, 900)
+    limit_email(data.email)
+    with SessionLocal() as db:
+        user_id = db.scalar(select(User.id).where(User.email == data.email, User.email_verified_at.is_not(None)))
+    if user_id is None:
+        return issue_challenge(data.email, password_hash=dummy_hash, purpose='password_reset')
+    return issue_challenge(data.email, user_id=user_id, purpose='password_reset')
+
+
+@router.post('/resend-password-reset', status_code=204)
+def resend_password_reset(data: ChallengeInput, request: Request):
+    throttle('password-reset-resend-ip', client_ip(request), 20, 900)
+    with SessionLocal.begin() as db:
+        challenge = locked_challenge(db, data.challenge, datetime.now(timezone.utc), 'password_reset')
+        now = datetime.now(timezone.utc)
+        if challenge.resend_after > now:
+            raise HTTPException(429, 'Запросить новый код можно через минуту после отправки.')
+        if challenge.expires - now < timedelta(minutes=1):
+            raise HTTPException(410, 'Подтверждение истекло. Начните заново.')
+        limit_email(challenge.email)
+        rotate_code(challenge, now)
+
+
+@router.post('/reset-password', status_code=204)
+def reset_password(data: ResetPassword, request: Request):
+    throttle('password-reset-verify-ip', client_ip(request), 40, 900)
+    with SessionLocal.begin() as db:
+        challenge = locked_challenge(db, data.challenge, datetime.now(timezone.utc), 'password_reset')
+        now = datetime.now(timezone.utc)
+        if challenge.code_expires <= now or challenge.attempts_left <= 0:
+            raise HTTPException(422, 'Код истёк или исчерпаны попытки. Запросите новый код.')
+        if secrets.compare_digest(challenge.code_hash, code_digest(challenge.id, data.code)):
+            user = db.scalar(select(User).where(User.id == challenge.user_id).with_for_update())
+            if user is None or user.email != challenge.email or user.email_verified_at is None:
+                raise HTTPException(410, 'Начните восстановление заново.')
+            user.password_hash = passwords.hash(data.password)
+            db.execute(delete(LoginSession).where(LoginSession.user_id == user.id))
+            db.execute(delete(EmailChallenge).where(EmailChallenge.email == user.email))
+            return
+        challenge.attempts_left -= 1
+    raise HTTPException(422, 'Неверный код.')
+
+
 @router.post('/login')
 def login(data: Credentials, request: Request, response: Response):
     throttle('login-ip', client_ip(request), 30, 900)
     throttle('login-email', data.email, 8, 900)
     with SessionLocal.begin() as db:
-        user = db.scalar(select(User).where(User.email == data.email))
+        user = db.scalar(select(User).where(User.email == data.email).with_for_update())
         try:
             passwords.verify(user.password_hash if user else dummy_hash, data.password)
         except VerificationError:

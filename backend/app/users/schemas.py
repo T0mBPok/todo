@@ -10,6 +10,20 @@ class CodeInput(ChallengeInput):
     code: str = Field(pattern=r'^[0-9]{8}$')
 
 
+class ResetRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    email: EmailStr
+
+    @field_validator('email')
+    @classmethod
+    def normalize_email(cls, value):
+        return value.casefold()
+
+
+class ResetPassword(CodeInput):
+    password: str = Field(min_length=15, max_length=128)
+
+
 class Credentials(BaseModel):
     model_config = ConfigDict(extra='forbid')
     email: EmailStr

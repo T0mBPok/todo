@@ -1,7 +1,7 @@
 <script setup>
 import { nextTick, ref } from 'vue'
 import { categories, categoryLabel } from '../../shared/categories'
-import { localDate, request, taskPayload } from '../../shared/api'
+import { localDate, taskPayload } from '../../shared/api'
 import { fromKey } from '../../shared/calendar'
 import { createTask, deleteTask, updateTask } from './api'
 
@@ -16,6 +16,20 @@ const fullDate = new Intl.DateTimeFormat('ru-RU', { weekday: 'long', day: 'numer
 const floatingDate = new Intl.DateTimeFormat('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
 const clock = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' })
 const isSeries = task => Boolean(task?.recurrence || task?.series_parent_id)
+let backdropDialog = null
+function isOutside(event) {
+  const box = event.currentTarget.getBoundingClientRect()
+  return event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom
+}
+function startBackdrop(event) {
+  backdropDialog = event.target === event.currentTarget && isOutside(event) ? event.currentTarget : null
+}
+function dismissBackdrop(event, close) {
+  const outside = backdropDialog === event.currentTarget && event.target === event.currentTarget && isOutside(event)
+  backdropDialog = null
+  if (outside) close()
+}
+
 
 function period(task) {
   const start = new Date(task.start), end = new Date(task.end)
@@ -87,7 +101,7 @@ function create(day, hour) {
   const start = fromKey(day)
   start.setHours(hour, 0, 0, 0)
   return showEditor({
-    title: '', description: '', category: 'auto', is_fixed: false, is_all_day: false,
+    title: '', description: '', category: 'important_not_urgent', is_fixed: false, is_all_day: false,
     start: start.toISOString(), end: new Date(+start + 60 * 60 * 1000).toISOString()
   })
 }
@@ -129,9 +143,7 @@ async function apply(action) {
       await deleteTask(selected.value.id, seriesOptions(selected.value))
     } else {
       const task = draft.value
-      const category = task.category === 'auto'
-        ? (await request('/todos/classify', 'POST', { title: task.title, description: task.description || '' })).category
-        : task.category
+      const category = task.category
       const data = taskPayload({
         ...task, category, recurrence: null,
         start: inputValue(task.startDate, task.startTime, task.start, task.is_all_day),
@@ -168,7 +180,7 @@ defineExpose({ preview, create })
 <template>
   <Teleport to="body">
     <dialog ref="details" class="event-details" :style="position" aria-labelledby="event-preview-title"
-      @cancel.prevent="closeDetails" @click.self="closeDetails">
+      @cancel.prevent="closeDetails" @pointerdown="startBackdrop" @click="dismissBackdrop($event, closeDetails)">
       <div v-if="selected" class="preview-body">
         <div class="preview-actions">
           <button type="button" class="event-icon" title="Редактировать" aria-label="Редактировать событие"
@@ -196,7 +208,8 @@ defineExpose({ preview, create })
       </div>
     </dialog>
 
-    <dialog ref="editor" class="calendar-editor" aria-labelledby="calendar-editor-title" @cancel.prevent="closeEditor">
+    <dialog ref="editor" class="calendar-editor" aria-labelledby="calendar-editor-title" @cancel.prevent="closeEditor"
+      @pointerdown="startBackdrop" @click="dismissBackdrop($event, closeEditor)">
       <form v-if="draft" class="calendar-form" @submit.prevent="save">
         <header class="editor-toolbar">
           <button type="button" class="event-icon" title="Вернуться к календарю" aria-label="Закрыть редактор"
@@ -250,7 +263,6 @@ defineExpose({ preview, create })
             </label>
             <label class="category-field">Категория
               <select v-model="draft.category">
-                <option v-if="!draft.id" value="auto">Определить с помощью ИИ</option>
                 <option v-for="item in categories" :key="item.value" :value="item.value">{{ item.label }}</option>
               </select>
             </label>
@@ -265,7 +277,7 @@ defineExpose({ preview, create })
     </dialog>
 
     <dialog ref="scopeDialog" class="calendar-scope" aria-labelledby="scope-dialog-title"
-      @cancel.prevent="closeScope" @click.self="closeScope">
+      @cancel.prevent="closeScope" @pointerdown="startBackdrop" @click="dismissBackdrop($event, closeScope)">
       <form v-if="scopeAction" class="scope-form" @submit.prevent="apply(scopeAction)">
         <h2 id="scope-dialog-title">{{ scopeAction === 'delete' ? 'Удалить повторяющееся событие' : 'Изменить повторяющееся событие' }}</h2>
         <fieldset :disabled="busy">
@@ -287,14 +299,14 @@ defineExpose({ preview, create })
 
 <style scoped>
 .event-details, .calendar-editor, .calendar-scope {
-  --editor-accent: #0b57d0;
-  --editor-text: #202124;
-  --editor-muted: #5f6368;
-  --editor-line: #dadce0;
+  --editor-accent: var(--ember, #bc481b);
+  --editor-text: var(--ink, #25202a);
+  --editor-muted: var(--muted, #7b727c);
+  --editor-line: var(--line, #e9e3dc);
   border: 0;
   padding: 0;
   color: var(--editor-text);
-  background: #fff;
+  background: var(--paper, #fffcf8);
 }
 
 .event-details {
@@ -333,13 +345,19 @@ defineExpose({ preview, create })
 .calendar-editor {
   position: fixed;
   inset: 0;
-  margin: 0;
-  width: 100vw;
+  margin: auto;
+  width: min(720px, calc(100vw - 48px));
   max-width: none;
-  height: 100dvh;
-  max-height: none;
+  height: fit-content;
+  max-height: calc(100dvh - 48px);
+  overflow: auto;
+  border: 1px solid var(--editor-line);
+  border-radius: 18px;
+  box-shadow: 0 18px 70px #25202a33;
 }
-.calendar-form { min-height: 100%; }
+.calendar-editor::backdrop { background: #25202a33; }
+.calendar-form label { margin: 0; }
+.calendar-form .editor-title-field { margin-bottom: 18px; }
 .editor-toolbar {
   position: sticky;
   top: 0;
@@ -348,9 +366,9 @@ defineExpose({ preview, create })
   align-items: center;
   gap: 12px;
   min-height: 64px;
-  padding: 8px max(16px, calc((100vw - 1000px) / 2));
+  padding: 10px 20px;
   border-bottom: 1px solid var(--editor-line);
-  background: #fff;
+  background: var(--paper, #fffcf8);
 }
 .editor-toolbar span { font-size: 16px; }
 .editor-toolbar .editor-primary { margin-left: auto; }
@@ -360,14 +378,14 @@ defineExpose({ preview, create })
   border-radius: 20px;
   font-weight: 600;
 }
-.editor-primary { color: #fff; background: var(--editor-accent); }
-.editor-primary:hover { background: #0847ab; }
+.editor-primary { color: #fff; background: var(--obsidian, #25202a); }
+.editor-primary:hover { background: #3c303e; }
 .editor-secondary { color: var(--editor-accent); }
 .editor-secondary:hover { background: #edf3fe; }
 .editor-danger { background: #b3261e; }
 .editor-danger:hover { background: #8c1d18; }
 
-.editor-content { max-width: 940px; margin: 0 auto; padding: 30px 26px 42px; }
+.editor-content { margin: 0 auto; padding: 20px 24px 26px; }
 .editor-title-field { display: block; margin-bottom: 20px; }
 .editor-title-field input {
   width: 100%;
@@ -377,7 +395,7 @@ defineExpose({ preview, create })
   background: transparent;
   padding: 10px 0;
   color: inherit;
-  font-size: clamp(24px, 4vw, 32px);
+  font-size: 24px;
 }
 .calendar-editor :is(input, textarea, select, button):focus-visible,
 .calendar-scope :is(input, button):focus-visible,
@@ -393,7 +411,7 @@ defineExpose({ preview, create })
   padding: 8px 10px;
   border: 1px solid var(--editor-line);
   border-radius: 7px;
-  background: #fff;
+  background: var(--paper, #fffcf8);
   color: inherit;
 }
 .repeat-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-height: 40px; margin-top: 12px; }
@@ -402,7 +420,7 @@ defineExpose({ preview, create })
 .editor-fields { display: grid; gap: 16px; margin-top: 22px; }
 .editor-fields h2 { margin: 0; padding: 9px 0; border-bottom: 1px solid var(--editor-line); font-size: 16px; font-weight: 600; }
 .editor-fields label { display: grid; gap: 6px; }
-.editor-fields textarea { width: 100%; resize: vertical; }
+.editor-fields textarea { width: 100%; height: 90px; min-height: 70px; resize: vertical; }
 .category-field { max-width: 340px; }
 .editor-fields .fixed-field { display: flex; align-items: flex-start; gap: 8px; }
 .fixed-field input { margin: 3px 0 0; }
@@ -425,7 +443,10 @@ defineExpose({ preview, create })
 .scope-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 20px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
-@media (max-width: 640px) {
+@media (max-width: 760px) {
+  .calendar-editor { width:100vw; height:100dvh; max-height:100dvh; margin:0; border:0; border-radius:0; }
+  .calendar-form { min-height:100%; }
+
   .event-details { inset: auto 12px 12px !important; width: auto; max-height: 60dvh; }
   .editor-content { padding: 18px 16px 28px; }
   .editor-toolbar { gap: 6px; padding-inline: 10px; }

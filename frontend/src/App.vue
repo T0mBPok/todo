@@ -3,11 +3,16 @@ import {nextTick, onMounted, ref} from 'vue'
 import TodoApp from './entities/todos/TodoApp.vue'
 import CalendarApp from './CalendarApp.vue'
 import {request} from './shared/api.js'
+import PasswordInput from './shared/PasswordInput.vue'
 
 const mode = ref('calendar')
 const user = ref(null)
 const ready = ref(false)
 const registration = ref(false)
+const recovery = ref(false)
+const passwordAgain = ref('')
+const recoveryNotice = ref('')
+const accountOpen = ref(false)
 const email = ref('')
 const password = ref('')
 const pendingEmail = ref(null)
@@ -74,6 +79,46 @@ async function authenticate() {
   }
 }
 
+async function recoverPassword() {
+  busy.value = true
+  error.value = ''
+  verificationNotice.value = ''
+  try {
+    if (!pendingEmail.value) {
+      pendingEmail.value = await request('/auth/request-password-reset', 'POST', { email: email.value })
+      code.value = ''
+    } else {
+      if (password.value !== passwordAgain.value) {
+        error.value = 'Пароли не совпадают.'
+        return
+      }
+      await request('/auth/reset-password', 'POST', {
+        challenge: pendingEmail.value.challenge, code: code.value, password: password.value
+      })
+      recovery.value = false
+      pendingEmail.value = null
+      password.value = ''
+      passwordAgain.value = ''
+      code.value = ''
+      recoveryNotice.value = 'Пароль обновлён. Войдите с новым паролем.'
+    }
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    busy.value = false
+  }
+}
+
+function openRecovery() {
+  recovery.value = true
+  registration.value = false
+  password.value = ''
+  passwordAgain.value = ''
+  pendingEmail.value = null
+  error.value = ''
+  recoveryNotice.value = ''
+}
+
 async function confirmEmail() {
   busy.value = true
   error.value = ''
@@ -94,7 +139,7 @@ async function resendEmail() {
   error.value = ''
   verificationNotice.value = ''
   try {
-    await request('/auth/resend-email', 'POST', {challenge: pendingEmail.value.challenge})
+    await request(recovery.value ? '/auth/resend-password-reset' : '/auth/resend-email', 'POST', {challenge: pendingEmail.value.challenge})
     code.value = ''
     verificationNotice.value = 'Отправили новый код. Используйте последнее письмо.'
   } catch (e) {
@@ -107,6 +152,9 @@ async function resendEmail() {
 function backToAccountForm() {
   pendingEmail.value = null
   code.value = ''
+  password.value = ''
+  passwordAgain.value = ''
+  recovery.value = false
   error.value = ''
 }
 
@@ -203,7 +251,25 @@ async function googleAction(action, payload) {
 <template>
   <main v-if="!ready" class="account-screen" aria-busy="true">Загружаем приложение…</main>
   <main v-else-if="!user" class="account-screen">
-    <form v-if="pendingEmail" class="account-card" @submit.prevent="confirmEmail">
+    <form v-if="recovery" class="account-card" @submit.prevent="recoverPassword">
+      <div class="impulse-brand"><span class="impulse-mark" aria-hidden="true">↯</span><span>Импульс</span></div>
+      <h1>{{ pendingEmail ? 'Новый пароль' : 'Восстановить доступ' }}</h1>
+      <p v-if="pendingEmail">Если для {{ pendingEmail.email }} есть подтверждённый аккаунт, на почту придёт код. Он действует 10 минут.</p>
+      <p v-else>Пришлём код на почту вашего аккаунта.</p>
+      <label v-if="!pendingEmail">Почта<input v-model.trim="email" type="email" autocomplete="username" maxlength="254" required></label>
+      <template v-else>
+        <label>Код из письма<input v-model.trim="code" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" autocomplete="one-time-code" required></label>
+        <label>Новый пароль<PasswordInput v-model="password" minlength="15" maxlength="128" autocomplete="new-password" required /></label>
+        <label>Повторите пароль<PasswordInput v-model="passwordAgain" minlength="15" maxlength="128" autocomplete="new-password" required /></label>
+        <small>Минимум 15 символов.</small>
+      </template>
+      <p v-if="error" role="alert">{{ error }}</p>
+      <p v-if="verificationNotice" role="status">{{ verificationNotice }}</p>
+      <button class="account-primary" :disabled="busy">{{ busy ? 'Подождите…' : pendingEmail ? 'Сохранить пароль' : 'Получить код' }}</button>
+      <button v-if="pendingEmail" type="button" :disabled="busy" @click="resendEmail">Отправить код ещё раз</button>
+      <button type="button" :disabled="busy" @click="backToAccountForm">Вернуться ко входу</button>
+    </form>
+    <form v-else-if="pendingEmail" class="account-card" @submit.prevent="confirmEmail">
       <h1>Подтвердите почту</h1>
       <p>Отправили восьмизначный код на <strong>{{ pendingEmail.email }}</strong>. Он действует до 10 минут.</p>
       <label>Код из письма<input v-model.trim="code" type="text" inputmode="numeric" pattern="[0-9]{8}"
@@ -218,10 +284,12 @@ async function googleAction(action, payload) {
       <div class="impulse-brand"><span class="impulse-mark" aria-hidden="true">↯</span><span>Импульс</span></div>
       <h1>{{ registration ? 'Создать аккаунт' : 'Войти в Импульс' }}</h1>
       <label>Почта<input v-model.trim="email" type="email" maxlength="254" autocomplete="username" required></label>
-      <label>Пароль<input v-model="password" type="password" :minlength="registration ? 15 : 1"
-        maxlength="128" :autocomplete="registration ? 'new-password' : 'current-password'" required></label>
+      <label>Пароль<PasswordInput v-model="password" :minlength="registration ? 15 : 1"
+        maxlength="128" :autocomplete="registration ? 'new-password' : 'current-password'" :key="registration" required /></label>
       <small v-if="registration">Минимум 15 символов.</small>
       <p v-if="error" role="alert">{{ error }}</p>
+      <p v-if="recoveryNotice" role="status">{{ recoveryNotice }}</p>
+      <button v-if="!registration" type="button" class="forgot-password" :disabled="busy" @click="openRecovery">Забыли пароль?</button>
       <button class="account-primary" type="submit" :disabled="busy">{{ busy ? 'Подождите…' : registration ? 'Зарегистрироваться' : 'Войти' }}</button>
       <button type="button" :disabled="busy" @click="registration = !registration; error = ''">
         {{ registration ? 'Уже есть аккаунт' : 'Создать аккаунт' }}
@@ -233,8 +301,14 @@ async function googleAction(action, payload) {
       <div class="impulse-brand"><span class="impulse-mark" aria-hidden="true">↯</span><span>Импульс<small>ЛИЧНЫЙ ПЛАНИРОВЩИК</small></span></div>
       <button :class="{active:mode==='todos'}" @click="mode='todos'">✓ Задачи</button>
       <button :class="{active:mode==='calendar'}" @click="mode='calendar'">▦ Календарь</button>
-      <button ref="googleTrigger" @click="openGoogle()">Google</button>
-      <button :title="user.email" @click="logout">Выйти</button>
+      <div class="account-menu" @focusout="!$event.currentTarget.contains($event.relatedTarget) && (accountOpen=false)">
+        <button class="account-avatar" :aria-expanded="accountOpen" aria-label="Аккаунт и подключения" @click="accountOpen=!accountOpen">{{ user.email[0].toUpperCase() }}</button>
+        <div v-if="accountOpen" class="account-popover" @keydown.esc="accountOpen=false">
+          <span>{{ user.email }}</span>
+          <button ref="googleTrigger" @click="accountOpen=false;openGoogle()">Подключение Google</button>
+          <button @click="accountOpen=false;logout()">Выйти из аккаунта</button>
+        </div>
+      </div>
     </nav>
     <p v-if="error" role="alert">{{ error }}</p>
     <div :key="revision" class="mode-content" :inert="googleOpen"><TodoApp v-if="mode==='todos'"/><CalendarApp v-else/></div>
