@@ -9,6 +9,12 @@ def capture_mail(monkeypatch):
     monkeypatch.setattr(config, 'EMAIL_CODE_KEY', 'a' * 64)
     monkeypatch.setattr(email_verification, 'send_code', lambda address, code, purpose='verify': inbox.update({address: code}))
     test_ip = str(uuid4())
+    original_throttle = router.throttle
+    def isolated_throttle(scope, subject, maximum, seconds):
+        if scope.endswith('-global'):
+            subject = test_ip + ':' + subject
+        return original_throttle(scope, subject, maximum, seconds)
+    monkeypatch.setattr(router, 'throttle', isolated_throttle)
     monkeypatch.setattr(router, 'client_ip', lambda _: test_ip)
     return inbox
 

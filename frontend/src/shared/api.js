@@ -1,20 +1,26 @@
+import { AppError, publicMessage } from './errors.js'
+export { errorMessage } from './errors.js'
+
 export async function request(path, method = 'GET', body) {
-  const response = await fetch('/api' + path, {
-    method, headers: { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body)
-  })
+  let response
+  try {
+    response = await fetch('/api' + path, {
+      method, headers: { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    })
+  } catch (_) {
+    throw new AppError('Не удалось связаться с сервисом. Проверьте интернет и попробуйте ещё раз.')
+  }
   return readApiResponse(response)
 }
-export async function readApiResponse(response, fallback = 'Ошибка запроса к серверу.') {
+export async function readApiResponse(response, fallback = 'Не удалось выполнить действие. Попробуйте ещё раз.') {
   if (response.status === 204) return null
-  if (response.ok) return response.json()
+  if (response.ok) {
+    try { return await response.json() }
+    catch (_) { throw new AppError('Не удалось прочитать ответ сервиса. Попробуйте ещё раз.', 502) }
+  }
   const result = await response.json().catch(() => null)
-  const message = typeof result?.detail === 'string' ? result.detail : fallback
-  const id = response.headers.get('X-Request-ID')
-  const error = new Error(id ? `${message} Код запроса: ${id}` : message)
-  error.status = response.status
-  error.detail = message
-  throw error
+  throw new AppError(publicMessage(result?.detail, response.status, fallback), response.status)
 }
 export function localDate(value) {
   const date = new Date(value)

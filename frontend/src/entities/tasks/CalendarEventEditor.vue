@@ -1,4 +1,5 @@
 <script setup>
+import { errorMessage } from '../../shared/errors.js'
 import { nextTick, ref } from 'vue'
 import { categories, categoryLabel } from '../../shared/categories'
 import { localDate, taskPayload } from '../../shared/api'
@@ -160,7 +161,7 @@ async function apply(action) {
     draft.value = null
     emit('refresh')
   } catch (failure) {
-    error.value = failure.message
+    error.value = errorMessage(failure)
   } finally {
     busy.value = false
   }

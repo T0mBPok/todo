@@ -1,10 +1,15 @@
 <script setup>
-import {nextTick, onMounted, ref} from 'vue'
+import { errorMessage } from './shared/errors.js'
+import {nextTick, onMounted, onUnmounted, ref, watch} from 'vue'
 import TodoApp from './entities/todos/TodoApp.vue'
 import CalendarApp from './CalendarApp.vue'
 import {request} from './shared/api.js'
 import PasswordInput from './shared/PasswordInput.vue'
 
+const globalError = ref('')
+function showGlobalError(event) { globalError.value = event.detail }
+onMounted(() => window.addEventListener('impulse:error', showGlobalError))
+onUnmounted(() => window.removeEventListener('impulse:error', showGlobalError))
 const mode = ref('calendar')
 const user = ref(null)
 const ready = ref(false)
@@ -24,9 +29,7 @@ const googleOpen = ref(false)
 const google = ref(null)
 const googleDialog = ref(null)
 const googleTrigger = ref(null)
-const googleImportOffer = ref(false)
-const googleImportKinds = ref([])
-const googleKinds = [['event', 'Календарь'], ['todo', 'Задачи']]
+const googleConflicts = ref([])
 const syncBusy = ref(false)
 const message = ref('')
 const revision = ref(0)
@@ -36,7 +39,7 @@ async function loadUser() {
   try {
     user.value = await request('/auth/me')
   } catch (e) {
-    if (e.status !== 401) error.value = e.message
+    if (e.status !== 401) error.value = errorMessage(e)
   } finally {
     ready.value = true
   }
@@ -52,7 +55,7 @@ onMounted(async () => {
     window.history.replaceState(null, '', url)
     if (user.value) {
       const connected = callback === 'connected'
-      await openGoogle(connected ? '' : 'Google не подключён. Проверьте разрешения и попробуйте ещё раз.', connected)
+      await openGoogle(connected ? '' : 'Google не подключён. Проверьте разрешения и попробуйте ещё раз.')
     }
   }
 })
@@ -73,7 +76,7 @@ async function authenticate() {
     }
     password.value = ''
   } catch (e) {
-    error.value = e.message
+    error.value = errorMessage(e)
   } finally {
     busy.value = false
   }
@@ -103,7 +106,7 @@ async function recoverPassword() {
       recoveryNotice.value = 'Пароль обновлён. Войдите с новым паролем.'
     }
   } catch (e) {
-    error.value = e.message
+    error.value = errorMessage(e)
   } finally {
     busy.value = false
   }
@@ -128,7 +131,7 @@ async function confirmEmail() {
     pendingEmail.value = null
     code.value = ''
   } catch (e) {
-    error.value = e.message
+    error.value = errorMessage(e)
   } finally {
     busy.value = false
   }
@@ -143,7 +146,7 @@ async function resendEmail() {
     code.value = ''
     verificationNotice.value = 'Отправили новый код. Используйте последнее письмо.'
   } catch (e) {
-    error.value = e.message
+    error.value = errorMessage(e)
   } finally {
     busy.value = false
   }
@@ -167,20 +170,20 @@ async function logout() {
     googleOpen.value = false
     mode.value = 'calendar'
   } catch (e) {
-    error.value = e.message
+    error.value = errorMessage(e)
   }
 }
 
-async function openGoogle(notice = '', offerImport = false) {
+async function openGoogle(notice = '') {
   googleOpen.value = true
   google.value = null
-  googleImportOffer.value = offerImport
-  googleImportKinds.value = []
+  googleConflicts.value = []
   message.value = notice
   try {
     google.value = await request('/google/status')
+    if (google.value.conflicts) googleConflicts.value = await request('/google/conflicts')
   } catch (e) {
-    message.value = e.message
+    message.value = errorMessage(e)
   }
   await nextTick()
   googleDialog.value?.focus()
@@ -189,7 +192,6 @@ async function openGoogle(notice = '', offerImport = false) {
 function closeGoogle() {
   if (syncBusy.value) return
   googleOpen.value = false
-  googleImportOffer.value = false
   nextTick(() => googleTrigger.value?.focus())
 }
 
@@ -199,32 +201,52 @@ function syncSummary(result) {
     (result.partial ? ' Обработана часть записей. Повторите обмен, чтобы продолжить.' : '')
 }
 
-async function importSelectedGoogleData() {
-  if (syncBusy.value || !google.value?.connected || !googleImportKinds.value.length) return
-  const selection = googleKinds.filter(([kind]) => googleImportKinds.value.includes(kind))
-  syncBusy.value = true
-  message.value = ''
-  const results = []
-  const retry = []
+let googlePollTimer, googlePollBusy=false, lastGoogleSync=null
+async function pollGoogleStatus() {
+  if (!user.value || googlePollBusy || syncBusy.value) return
+  googlePollBusy=true
   try {
-    for (const [kind, title] of selection) {
-      try {
-        const result = await request('/google/sync', 'POST', {direction: 'pull', kind})
-        results.push(title + ': ' + syncSummary(result))
-        if (result.partial) retry.push(kind)
-      } catch (e) {
-        results.push(title + ': ' + e.message)
-        retry.push(kind)
-      }
-    }
-    googleImportKinds.value = retry
-    googleImportOffer.value = retry.length > 0
-    message.value = results.join('\n')
-    revision.value++
-  } finally {
-    syncBusy.value = false
-  }
+    const state=await request('/google/status')
+    if (lastGoogleSync && state.last_synced_at && lastGoogleSync!==state.last_synced_at) revision.value++
+    lastGoogleSync=state.last_synced_at
+    google.value=state
+    if (googleOpen.value) googleConflicts.value=state.conflicts ? await request('/google/conflicts') : []
+  } catch (error) {
+    if (googleOpen.value) message.value=errorMessage(error)
+  } finally { googlePollBusy=false }
 }
+function resumeGoogleStatus() { if (document.visibilityState==='visible') pollGoogleStatus() }
+watch(user,value=>{ if (value) pollGoogleStatus(); else { google.value=null;lastGoogleSync=null } })
+onMounted(()=>{
+  googlePollTimer=setInterval(pollGoogleStatus,30000)
+  document.addEventListener('visibilitychange',resumeGoogleStatus)
+})
+onUnmounted(()=>{clearInterval(googlePollTimer);document.removeEventListener('visibilitychange',resumeGoogleStatus)})
+async function toggleGoogleAuto(enabled) {
+  syncBusy.value=true;message.value=''
+  try {
+    google.value=await request('/google/auto-sync','POST',{enabled})
+    message.value=enabled?'Автосинхронизация включена. Первый обмен начнётся автоматически.':'Автосинхронизация приостановлена.'
+  } catch (error) { message.value=errorMessage(error) }
+  finally {syncBusy.value=false}
+}
+async function syncGoogleNow() {
+  syncBusy.value=true
+  try {message.value=(await request('/google/sync-now','POST')).note}
+  catch(error){message.value=errorMessage(error)}
+  finally{syncBusy.value=false}
+}
+async function resolveGoogleConflict(item,source) {
+  syncBusy.value=true;message.value=''
+  try {
+    message.value=(await request('/google/resolve','POST',{local_id:item.local_id,kind:item.kind,source})).note
+    googleConflicts.value=await request('/google/conflicts')
+    google.value=await request('/google/status')
+    revision.value++
+  } catch(error) { message.value=errorMessage(error) }
+  finally {syncBusy.value=false}
+}
+function googleSyncTime(value) { return new Date(value).toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) }
 
 async function googleAction(action, payload) {
   syncBusy.value = true
@@ -240,7 +262,7 @@ async function googleAction(action, payload) {
       message.value = syncSummary(result)
     }
   } catch (e) {
-    message.value = e.message
+    message.value = errorMessage(e)
     if (payload?.direction === 'pull') revision.value++
   } finally {
     syncBusy.value = false
@@ -249,6 +271,7 @@ async function googleAction(action, payload) {
 </script>
 
 <template>
+  <div v-if="globalError" class="app-error-toast" role="alert"><span>{{ globalError }}</span><button type="button" aria-label="Закрыть сообщение об ошибке" @click="globalError=''">×</button></div>
   <main v-if="!ready" class="account-screen" aria-busy="true">Загружаем приложение…</main>
   <main v-else-if="!user" class="account-screen">
     <form v-if="recovery" class="account-card" @submit.prevent="recoverPassword">
@@ -297,10 +320,13 @@ async function googleAction(action, payload) {
     </form>
   </main>
   <template v-else>
-    <nav class="mode-switch" aria-label="Раздел приложения" :inert="googleOpen">
+    <header class="mode-switch workspace-header" :class="{'has-calendar':mode==='calendar'}" :inert="googleOpen">
       <div class="impulse-brand"><span class="impulse-mark" aria-hidden="true">↯</span><span>Импульс<small>ЛИЧНЫЙ ПЛАНИРОВЩИК</small></span></div>
-      <button :class="{active:mode==='todos'}" @click="mode='todos'">✓ Задачи</button>
-      <button :class="{active:mode==='calendar'}" @click="mode='calendar'">▦ Календарь</button>
+      <div id="calendar-toolbar-host" v-show="mode==='calendar'" class="calendar-toolbar-host"></div>
+      <nav class="section-tabs" aria-label="Раздел приложения">
+        <button :class="{active:mode==='todos'}" @click="mode='todos'">✓ Задачи</button>
+        <button :class="{active:mode==='calendar'}" @click="mode='calendar'">▦ Календарь</button>
+      </nav>
       <div class="account-menu" @focusout="!$event.currentTarget.contains($event.relatedTarget) && (accountOpen=false)">
         <button class="account-avatar" :aria-expanded="accountOpen" aria-label="Аккаунт и подключения" @click="accountOpen=!accountOpen">{{ user.email[0].toUpperCase() }}</button>
         <div v-if="accountOpen" class="account-popover" @keydown.esc="accountOpen=false">
@@ -309,39 +335,40 @@ async function googleAction(action, payload) {
           <button @click="accountOpen=false;logout()">Выйти из аккаунта</button>
         </div>
       </div>
-    </nav>
+    </header>
     <p v-if="error" role="alert">{{ error }}</p>
-    <div :key="revision" class="mode-content" :inert="googleOpen"><TodoApp v-if="mode==='todos'"/><CalendarApp v-else/></div>
+    <div class="mode-content" :inert="googleOpen"><TodoApp v-if="mode==='todos'" :refresh-token="revision"/><CalendarApp v-else :refresh-token="revision"/></div>
     <div v-if="googleOpen" class="account-overlay" @click.self="closeGoogle">
       <section ref="googleDialog" class="account-card" role="dialog" aria-modal="true"
         aria-labelledby="google-dialog-title" tabindex="-1" @keydown.esc="closeGoogle">
         <button class="account-close" aria-label="Закрыть" :disabled="syncBusy" @click="closeGoogle">×</button>
-        <h2 id="google-dialog-title">{{ googleImportOffer && google?.connected ? 'Google подключён' : 'Обмен с Google' }}</h2>
+        <h2 id="google-dialog-title">Обмен с Google</h2>
         <p v-if="google && !google.configured">Администратор ещё не настроил Google OAuth.</p>
-        <form v-else-if="google?.connected && googleImportOffer" class="google-import" @submit.prevent="importSelectedGoogleData">
-          <fieldset :disabled="syncBusy">
-            <legend>Что загрузить из Google?</legend>
-            <label class="google-import-choice" v-for="[kind, title] in googleKinds" :key="kind">
-              <input v-model="googleImportKinds" type="checkbox" :value="kind">
-              {{ title }}
-            </label>
-          </fieldset>
-          <p>Можно выбрать оба пункта или вернуться к импорту позже.</p>
-          <div class="google-actions">
-            <button class="account-primary" type="submit" :disabled="syncBusy || !googleImportKinds.length">Загрузить выбранное</button>
-            <button type="button" :disabled="syncBusy" @click="closeGoogle">Позже</button>
-          </div>
-        </form>
         <template v-else-if="google?.connected">
-          <p>Основной календарь и список Google Tasks по умолчанию. Связанные записи обновляются при повторном обмене. Удаления не передаются.</p>
-          <div class="google-actions" v-for="[kind, title] in googleKinds" :key="kind">
-            <strong>{{ title }}</strong>
-            <button :disabled="syncBusy" @click="googleAction('sync', {direction:'pull', kind})">Из Google</button>
-            <button :disabled="syncBusy" @click="googleAction('sync', {direction:'push', kind})">В Google</button>
+          <p>Основной календарь Google и список Google Tasks по умолчанию.</p>
+          <label class="google-auto-switch"><input type="checkbox" :checked="google.auto_sync" :disabled="syncBusy" @change="toggleGoogleAuto($event.target.checked)"><span>Автоматическая синхронизация<small>Создание, изменения и удаления в обе стороны. Работает в фоне, даже когда приложение закрыто.</small></span></label>
+          <div class="google-sync-state" role="status">
+            <strong>{{ google.auto_sync ? 'Обмениваемся автоматически, примерно раз в минуту' : 'Автосинхронизация приостановлена' }}</strong>
+            <span v-if="google.last_synced_at">Последний обмен: {{ googleSyncTime(google.last_synced_at) }}</span>
+            <span v-else-if="google.auto_sync">Ожидаем первый обмен…</span>
+            <span v-if="google.partial">Переносим оставшиеся записи следующей порцией.</span>
           </div>
+          <p v-if="google.sync_error" role="alert" class="google-sync-error">{{ google.sync_error }}</p>
+          <button v-if="google.auto_sync" :disabled="syncBusy" @click="syncGoogleNow">Синхронизировать сейчас</button>
+          <section v-if="googleConflicts.length" class="google-conflicts">
+            <h3>Нужно выбрать версию</h3><p>Эти записи изменились в обоих приложениях. Выберите, какую версию оставить.</p>
+            <article v-for="item in googleConflicts" :key="item.kind+item.local_id">
+              <strong>{{ item.local?.title || item.remote?.title || 'Удалённая запись' }}</strong>
+              <div v-for="[source, label, version] in [['local','Импульс',item.local],['remote','Google',item.remote]]" :key="source" class="google-conflict-version">
+                <span>{{ label }}: {{ version ? version.title : 'Запись удалена' }}<small v-if="version?.start">{{ googleSyncTime(version.start) }} — {{ googleSyncTime(version.end) }}</small></span>
+                <button :disabled="syncBusy" @click="resolveGoogleConflict(item,source)">{{ version ? 'Оставить эту версию' : 'Подтвердить удаление' }}</button>
+              </div>
+            </article>
+          </section>
           <button :disabled="syncBusy" @click="googleAction('disconnect')">Отключить Google</button>
         </template>
-        <button v-else-if="google?.configured" class="account-primary" :disabled="syncBusy" @click="googleAction('connect')">Подключить аккаунт Google</button>
+        <p v-else-if="google?.configured">После подключения включится автоматическая синхронизация событий и задач в обе стороны.</p>
+        <button v-if="google?.configured && !google.connected" class="account-primary" :disabled="syncBusy" @click="googleAction('connect')">Подключить аккаунт Google</button>
         <p v-if="syncBusy" role="status">Обмен выполняется…</p>
         <p v-if="message" class="google-feedback" role="status">{{ message }}</p>
       </section>

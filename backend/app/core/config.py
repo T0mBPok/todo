@@ -51,3 +51,5 @@ def ai_model():
         return GIGACHAT_MODEL
     if AI_PROVIDER=='dashscope':return DASHSCOPE_MODEL
     return OPENROUTER_MODEL if AI_PROVIDER=='openrouter' else OLLAMA_MODEL
+
+GOOGLE_SYNC_WORKER = os.getenv('GOOGLE_SYNC_WORKER', '1') == '1'

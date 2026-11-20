@@ -1,4 +1,5 @@
 import {test} from 'node:test'
+import { errorMessage } from '../src/shared/errors.js'
 import assert from 'node:assert/strict'
 import {readFile} from 'node:fs/promises'
 const component=await readFile(new URL('../src/CalendarApp.vue',import.meta.url),'utf8')
@@ -7,7 +8,7 @@ function setup({response,error,confirmError}={}) {
   let callbacks, toggles=0,cancels=0,confirms=0,requests=0
   const ref=value=>({value}), computed=get=>({get value(){return get()}})
   const hook={supported:true,listening:ref(false),processing:ref(false),starting:ref(false),audioUrl:ref(''),rawTranscript:ref(''),engineName:ref(''),elapsed:ref(0),recordSeconds:ref(0),toggle:async()=>{toggles++;hook.listening.value=!hook.listening.value},cancel:()=>{cancels++;hook.listening.value=false}}
-  const deps={defineProps:()=>({refreshToken:0}),ref,computed,watch:()=>{},nextTick:async()=>{},onMounted:()=>{},window:{innerWidth:1280},
+  const deps={errorMessage,defineProps:()=>({refreshToken:0}),ref,computed,watch:()=>{},nextTick:async()=>{},onMounted:()=>{},window:{innerWidth:1280},
     useVoiceInput:options=>{callbacks=options;return hook},
     request:async path=>{requests++;if(error)throw Error(error);return path.endsWith('/execute')?{note:'Готово',tasks:[]}:path.endsWith('/clear-calendar')?{note:'Календарь очищен.'}:typeof response === 'function' ? response(requests) : response},
     listTasks:async()=>[],visibleRange:()=>({}),localDate:value=>new Date(value).toISOString().slice(0,16),

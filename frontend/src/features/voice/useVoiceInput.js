@@ -1,5 +1,5 @@
 import { ref, onUnmounted } from 'vue'
-import { readApiResponse } from '../../shared/api'
+import { readApiResponse, errorMessage } from '../../shared/api'
 
 export function useVoiceInput({ text, onComplete, onError }) {
   const supported = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder)
@@ -28,6 +28,7 @@ export function useVoiceInput({ text, onComplete, onError }) {
       })
       const result = await readApiResponse(response, 'Ошибка распознавания аудио.')
       if (disposed || cancelled) return
+      if (typeof result?.text !== 'string') throw new Error('Распознавание не вернуло текст. Повторите запись.')
       rawTranscript.value = result.text
       engineName.value = result.engine || 'Локальный движок'
       elapsed.value = result.seconds || 0
@@ -36,7 +37,7 @@ export function useVoiceInput({ text, onComplete, onError }) {
       processing.value = false
       await onComplete()
     } catch (error) {
-      if (!disposed && !cancelled) onError(error.name === 'TypeError' ? 'Нет связи с сервером распознавания. Попробуйте ещё раз.' : error.message)
+      if (!disposed && !cancelled) onError(error.name === 'TypeError' ? 'Нет связи с сервером распознавания. Попробуйте ещё раз.' : errorMessage(error))
     } finally { processing.value = false }
   }
   async function toggle() {
@@ -61,7 +62,7 @@ export function useVoiceInput({ text, onComplete, onError }) {
         NotFoundError: 'Микрофон не найден. Подключите его и повторите запись.',
         NotReadableError: 'Не удаётся открыть микрофон. Проверьте, не занят ли он другим приложением.'
       }
-      onError(messages[error.name] || 'Не удалось запустить микрофон: ' + error.message)
+      onError(messages[error.name] || 'Не удалось запустить микрофон. Проверьте подключение и разрешения, затем повторите запись.')
     } finally { starting.value = false }
   }
   function cancel() {

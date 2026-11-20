@@ -1,4 +1,5 @@
 <script setup>
+import { errorMessage } from '../../shared/errors.js'
 const props=defineProps({refreshToken:{type:Number,default:0}})
 import {ref,computed,onMounted,watch} from 'vue'
 import {request} from '../../shared/api'
@@ -14,7 +15,7 @@ const visible=computed(()=>tasks.value.filter(t=>(filter.value==='all'||(filter.
 const activeCount=computed(()=>tasks.value.filter(t=>!t.completed).length)
 async function refresh(){tasks.value=await request('/todos')}
 const {supported,listening,starting,processing,toggle,cancel,recordSeconds}=useVoiceInput({text,onComplete:interpret,onError:value=>{message.value=value;assistantOpen.value=true}})
-async function run(work){busy.value=true;try{await work();await refresh()}catch(error){message.value=error.message}finally{busy.value=false}}
+async function run(work){busy.value=true;try{await work();await refresh()}catch(error){message.value=errorMessage(error)}finally{busy.value=false}}
 async function add(){if(!title.value.trim())return;await run(async()=>{const selected=category.value;await request('/todos','POST',{title:title.value,description:description.value,category:selected});title.value='';description.value='';message.value='Задача добавлена.'})}
 async function complete(task){await run(()=>request('/todos/'+task.id,'PUT',{title:task.title,description:task.description,category:task.category,completed:!task.completed}))}
 async function save(){await run(async()=>{await request('/todos/'+editing.value.id,'PUT',{title:editing.value.title,description:editing.value.description,category:editing.value.category,completed:editing.value.completed});editing.value=null})}
@@ -27,12 +28,12 @@ async function interpret(){
  if(draft.value && /^(отмена|отмени|нет)[.! ]*$/i.test(utterance)){draft.value=null;text.value='';message.value='Отменено.';return}
  busy.value=true;message.value='Разбираю задачи…';draft.value=null
  try{const result=await request('/todos/commands/prepare','POST',{text:utterance,history:history.value});history.value=[...history.value,{role:'user',text:utterance.slice(0,1500)},{role:'assistant',text:result.note.slice(0,1500)}].slice(-8);draft.value=result;message.value=result.note;text.value='';busy.value=false;if(!result.requires_confirmation)await execute()}
- catch(error){message.value=error.message;history.value=[...history.value,{role:'user',text:utterance.slice(0,1500)},{role:'assistant',text:error.message.slice(0,1500)}].slice(-8)}finally{busy.value=false}
+ catch(error){message.value=errorMessage(error);history.value=[...history.value,{role:'user',text:utterance.slice(0,1500)},{role:'assistant',text:errorMessage(error).slice(0,1500)}].slice(-8)}finally{busy.value=false}
 }
 function mic(){message.value='';toggle()}
 function discardRecording(){cancel();text.value='';message.value='Запись отменена. Задачи не добавлены.'}
 onMounted(()=>run(refresh))
-watch(()=>props.refreshToken,()=>refresh().catch(e=>message.value=e.message))
+watch(()=>props.refreshToken,()=>refresh().catch(e=>message.value=errorMessage(e)))
 </script>
 <template><main class="todo-app"><header class="todo-heading"><div><span class="todo-eyebrow">В СВОЁМ ТЕМПЕ</span><h1>Мои задачи</h1><p>{{ activeCount?activeCount+' в работе':'Можно начать с одного дела' }} · без привязки ко времени</p></div><button class="assistant-trigger" aria-label="Открыть меню ИИ для задач" :aria-expanded="assistantOpen" @click="assistantOpen=true"><span aria-hidden="true">☰</span><span>Помощник</span><i></i></button></header>
 <section class="todo-capture"><form @submit.prevent="add"><label for="todo-title">Что нужно сделать?</label><div class="todo-add-row"><input id="todo-title" v-model="title" maxlength="200" required placeholder="Например, закончить отчёт" :disabled="busy"><button class="primary-button" :disabled="busy||!title.trim()">Добавить</button></div><details class="todo-add-details"><summary>Описание и категория</summary><textarea v-model="description" aria-label="Описание новой задачи" maxlength="5000" placeholder="Подробности, если нужны…" :disabled="busy"></textarea><label>Категория<select v-model="category" :disabled="busy"><option v-for="c in categories" :key="c.value" :value="c.value">{{ c.label }}</option></select></label></details></form></section>

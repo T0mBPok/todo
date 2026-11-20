@@ -186,7 +186,7 @@ function slotClick(event,day) {
 </template>
 
 <style scoped>
-.continuous-calendar-scroll { flex:1; min-height:0; overflow:auto; overscroll-behavior-x:contain; touch-action:auto; overflow-anchor:none; scrollbar-width:thin; scrollbar-color:#d7cdc5 transparent; }
+.continuous-calendar-scroll { flex:1; min-height:0; overflow:auto; overscroll-behavior-x:contain; touch-action:auto; overflow-anchor:none; }
 .calendar-timeline { position:relative; }
 .calendar-timeline .week-heading,.calendar-timeline .time-grid,.calendar-timeline .all-day-grid {
   display:grid; grid-template-columns:var(--gutter-width) repeat(var(--days),var(--column-width));

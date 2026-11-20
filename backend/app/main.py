@@ -1,14 +1,15 @@
 from fastapi import Depends, FastAPI, Request
-from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.balance.router import router as balance_router
 from app.commands.router import router as commands_router
+from app.core.errors import install_error_handlers
 from app.core import config
 from app.core.database import engine
 from app.core.request_logging import log_request
 from app.google_sync.router import router as google_router
+from app.google_sync.worker import lifespan
 from app.plans.ai import model_status
 from app.plans.router import router as plans_router
 from app.tasks.router import router as tasks_router
@@ -16,18 +17,10 @@ from app.todos.router import router as todos_router
 from app.users.router import require_user, router as auth_router
 from app.voice.router import router as voice_router
 
-app = FastAPI(title='Импульс', docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(lifespan=lifespan, title='Импульс', docs_url=None, redoc_url=None, openapi_url=None)
 
 
-@app.exception_handler(RequestValidationError)
-async def invalid_input(request: Request, _error):
-    return JSONResponse({'detail': 'Проверьте формат и длину введённых данных.'}, status_code=422)
-
-
-@app.exception_handler(Exception)
-async def internal_error(request: Request, _error):
-    return JSONResponse({'detail': 'Внутренняя ошибка сервера. Попробуйте ещё раз.'}, status_code=500,
-                        headers={'X-Request-ID': request.state.request_id, 'Cache-Control': 'no-store'})
+install_error_handlers(app)
 
 
 @app.middleware('http')

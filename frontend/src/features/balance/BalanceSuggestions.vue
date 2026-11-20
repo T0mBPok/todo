@@ -1,4 +1,5 @@
 <script setup>
+import { errorMessage } from '../../shared/errors.js'
 import {ref,watch,onMounted,onUnmounted} from 'vue'
 import {request} from '../../shared/api'
 const props=defineProps({tasks:Array}),emit=defineEmits(['applied'])
@@ -16,11 +17,11 @@ async function scan(force=false){
   result.value=null;dismissed.value=[];agreed.value={}
   const value=await request('/balance/scan','POST')
   if(!disposed){result.value=value;signature=key}
- }catch(e){if(!disposed)error.value=e.message}
+ }catch(e){if(!disposed)error.value=errorMessage(e)}
  finally{busy.value=false;if(pending&&!disposed){pending=false;schedule()}}
 }
 function schedule(){clearTimeout(timer);timer=setTimeout(()=>scan(),1500)}
-async function apply(index){busy.value=true;error.value='';try{const value=await request('/balance/'+result.value.id+'/apply','POST',{proposals:[index],coordination_confirmed:!!agreed.value[index]});result.value=null;signature='';emit('applied',value.note);pending=true}catch(e){error.value=e.message;result.value=null;signature=''}finally{busy.value=false;if(pending){pending=false;schedule()}}}
+async function apply(index){busy.value=true;error.value='';try{const value=await request('/balance/'+result.value.id+'/apply','POST',{proposals:[index],coordination_confirmed:!!agreed.value[index]});result.value=null;signature='';emit('applied',value.note);pending=true}catch(e){error.value=errorMessage(e);result.value=null;signature=''}finally{busy.value=false;if(pending){pending=false;schedule()}}}
 watch(()=>props.tasks,schedule)
 onMounted(()=>{scan();interval=setInterval(()=>scan(),60000)})
 onUnmounted(()=>{disposed=true;clearTimeout(timer);clearInterval(interval)})

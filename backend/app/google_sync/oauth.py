@@ -91,9 +91,9 @@ def complete(db, request, state, code):
         except (httpx.HTTPError, ValueError, KeyError, TypeError):
             raise HTTPException(502, 'Не удалось проверить аккаунт Google.') from None
     stmt = insert(GoogleConnection).values(owner_id=request.state.user_id, subject=subject,
-                                          refresh_token=encryption.encrypt(refresh.encode()).decode())
+                                          refresh_token=encryption.encrypt(refresh.encode()).decode(), sync_enabled=True, next_sync_at=datetime.now(timezone.utc))
     db.execute(stmt.on_conflict_do_update(index_elements=[GoogleConnection.owner_id],
-                                          set_={'subject': stmt.excluded.subject, 'refresh_token': stmt.excluded.refresh_token}))
+                                          set_={'subject': stmt.excluded.subject, 'refresh_token': stmt.excluded.refresh_token, 'sync_enabled': True, 'next_sync_at': datetime.now(timezone.utc), 'sync_error': None}))
     db.commit()
 
 

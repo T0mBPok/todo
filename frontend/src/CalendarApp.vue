@@ -1,4 +1,5 @@
 <script setup>
+import { errorMessage } from './shared/errors.js'
 const props=defineProps({refreshToken:{type:Number,default:0}})
 import { onMounted, ref, computed, watch } from 'vue'
 import { confirmPlan } from './entities/plans/api'
@@ -27,6 +28,7 @@ const quickMode=ref(false)
 const voiceTrigger=ref(null)
 const day = ref(localDate(new Date()).slice(0,10))
 const monthLabel=computed(()=>fromKey(day.value).toLocaleDateString('ru-RU',{month:'long',year:'numeric'}))
+const shortMonthLabel=computed(()=>fromKey(day.value).toLocaleDateString('ru-RU',{month:'short',year:'numeric'}).replace(' г.',''))
 const miniDays=computed(()=>monthDays(fromKey(day.value)))
 const todayKey=dateKey(new Date())
 function navigate(amount) { day.value=moveDate(day.value,amount,view.value) }
@@ -60,7 +62,7 @@ function updateTaskRange(range) { taskRange.value = range }
 let refreshVersion=0
 async function refresh() { const version=++refreshVersion; const result=await listTasks(taskRange.value || visibleRange(day.value,view.value)); if(version===refreshVersion) tasks.value=result }
 watch(taskRange,()=>refreshSafely())
-async function refreshSafely() { try { await refresh() } catch (error) { message.value = error.message } }
+async function refreshSafely() { try { await refresh() } catch (error) { message.value = errorMessage(error) } }
 function readyCommand() {
   return command.value && choices.value.every((c,i)=>c.candidate!==null && (command.value.operations[i].instruction.operation==='create' || !(command.value.operations[i].candidates[c.candidate].recurrence || command.value.operations[i].candidates[c.candidate].series_parent_id) || c.scope))
 }
@@ -72,7 +74,7 @@ async function executeCommand() {
     message.value=result.note; savedTasks.value=result.tasks; command.value=null; text.value=''
     if(result.tasks.length) {contextTask.value=result.tasks[0];day.value=localDate(result.tasks[0].start).slice(0,10)}
     await refreshSafely()
-  } catch(error) { showVoiceError(error.message) }
+  } catch(error) { showVoiceError(errorMessage(error)) }
   finally {busy.value=false;if(quickMode.value && (command.value || plan.value)) voiceOpen.value=true}
 }
 function cancelCalendarClear() {
@@ -104,7 +106,7 @@ async function confirmCalendarClear() {
     await refreshSafely()
   } catch (error) {
     if (error.status === 409) clearCalendarDraft.value = null
-    showVoiceError(error.message)
+    showVoiceError(errorMessage(error))
   } finally {
     busy.value = false
   }
@@ -193,7 +195,7 @@ async function generate(fromVoice = false) {
       if(autoSave.value && result.tasks.length === 1 && !result.review?.length) {savedTasks.value=await confirmPlan(result.id,result.tasks);contextTask.value=savedTasks.value.length===1?savedTasks.value[0]:null;await saved(localDate(result.tasks[0].start).slice(0,10))}
       else {text.value='';message.value='Проверь предложенные события перед сохранением.';voiceOpen.value=true}
     }
-  } catch(error) {commandHistory.value=[...commandHistory.value,{role:'user',text:utterance.slice(0,1500)},{role:'assistant',text:(error.detail||error.message).slice(0,1500)}].slice(-8);showVoiceError(error.message)}
+  } catch(error) {commandHistory.value=[...commandHistory.value,{role:'user',text:utterance.slice(0,1500)},{role:'assistant',text:errorMessage(error).slice(0,1500)}].slice(-8);showVoiceError(errorMessage(error))}
   finally {busy.value=false;if(quickMode.value && (command.value || plan.value)) voiceOpen.value=true}
 }
 function submitText() { cancel(); generate(false) }
@@ -213,22 +215,24 @@ async function savedFromPreview(date, events) {
 onMounted(async () => {
   await refreshSafely()
   try { const state = await request('/health'); aiReady.value = state.ai_configured; modelName.value = state.ai_model; aiProvider.value = state.ai_provider }
-  catch (error) { message.value = error.message }
+  catch (error) { message.value = errorMessage(error) }
 })
 watch(()=>props.refreshToken,()=>refreshSafely())
 </script>
 <template>
   <div class="calendar-app">
-    <header class="app-toolbar">
+    <Teleport defer to="#calendar-toolbar-host">
+    <div class="app-toolbar" role="group" aria-label="Управление календарём">
       <button class="icon-button menu-button" aria-label="Показать или скрыть боковую панель" @click="sidebarOpen=!sidebarOpen">☰</button>
       <div class="calendar-section-label">ТВОЁ ВРЕМЯ</div>
-      <button class="outline-button today-button" @click="day=todayKey">Сегодня</button>
+      <button class="outline-button today-button" aria-label="Сегодня" title="Сегодня" @click="day=todayKey"><span class="today-label">Сегодня</span><span class="today-number" aria-hidden="true">{{ new Date().getDate() }}</span></button>
       <div class="navigation-arrows"><button class="icon-button" aria-label="Предыдущий период" @click="navigate(-1)">‹</button><button class="icon-button" aria-label="Следующий период" @click="navigate(1)">›</button></div>
-      <h1 class="period-title">{{ monthLabel }}</h1>
+      <h1 class="period-title" :aria-label="monthLabel"><span class="full-month" aria-hidden="true">{{ monthLabel }}</span><span class="short-month" aria-hidden="true">{{ shortMonthLabel }}</span></h1>
       <div class="toolbar-spacer"></div>
       <button ref="voiceTrigger" class="assistant-trigger" aria-label="Открыть меню ИИ" :aria-expanded="voiceOpen" @click="voiceOpen=true"><span aria-hidden="true">☰</span><span>Помощник</span><i></i></button>
       <select v-model="view" class="view-select" aria-label="Вид календаря"><option value="day">День</option><option value="three">3 дня</option><option value="week">Неделя</option><option value="month">Месяц</option></select>
-    </header>
+    </div>
+    </Teleport>
     <div :class="['app-content',{'sidebar-collapsed':!sidebarOpen}]">
       <aside v-if="sidebarOpen" class="calendar-sidebar">
         <p class="sidebar-kicker">РАБОЧАЯ ОБЛАСТЬ</p><button class="create-button" @click="createCalendarEvent"><span>＋</span>Событие</button>

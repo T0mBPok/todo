@@ -1,4 +1,5 @@
 <script setup>
+import { errorMessage } from '../../shared/errors.js'
 import { computed, ref } from 'vue'
 import { categories } from '../../shared/categories'
 import { confirmPlan } from './api'
@@ -61,7 +62,7 @@ async function save() {
     const saved = await confirmPlan(props.plan.id, tasks.value.map(task => taskPayload({ ...task, recurrence: null })))
     emit('saved', tasks.value[0].start.slice(0, 10), saved)
   } catch (error) {
-    emit('error', error.message)
+    emit('error', errorMessage(error))
   } finally {
     busy.value = false
   }
