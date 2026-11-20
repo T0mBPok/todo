@@ -12,6 +12,7 @@ import AssistantDrawer from './features/voice/AssistantDrawer.vue'
 import PlanEditor from './entities/plans/PlanEditor.vue'
 import TaskCalendar from './entities/tasks/TaskCalendar.vue'
 import CalendarViewPicker from './shared/CalendarViewPicker.vue'
+import MenuIcon from './shared/MenuIcon.vue'
 import BalanceSuggestions from './features/balance/BalanceSuggestions.vue'
 const commandHistory=ref([])
 const command=ref(null), choices=ref([]), contextTask=ref(null)
@@ -224,23 +225,24 @@ watch(()=>props.refreshToken,()=>refreshSafely())
   <div class="calendar-app">
     <Teleport defer to="#calendar-toolbar-host">
     <div class="app-toolbar" role="group" aria-label="Управление календарём">
-      <button class="icon-button menu-button" aria-label="Показать или скрыть боковую панель" @click="sidebarOpen=!sidebarOpen">☰</button>
+      <button class="icon-button menu-button" aria-label="Показать или скрыть боковую панель" :aria-expanded="sidebarOpen" aria-controls="calendar-sidebar" @click="sidebarOpen=!sidebarOpen"><MenuIcon :open="sidebarOpen" /></button>
       <div class="calendar-section-label">ТВОЁ ВРЕМЯ</div>
       <button class="outline-button today-button" aria-label="Сегодня" title="Сегодня" @click="day=todayKey"><span class="today-label">Сегодня</span><span class="today-number" aria-hidden="true">{{ new Date().getDate() }}</span></button>
       <div class="navigation-arrows"><button class="icon-button" aria-label="Предыдущий период" @click="navigate(-1)">‹</button><button class="icon-button" aria-label="Следующий период" @click="navigate(1)">›</button></div>
       <h1 class="period-title" :aria-label="monthLabel"><span class="full-month" aria-hidden="true">{{ monthLabel }}</span><span class="short-month" aria-hidden="true">{{ shortMonthLabel }}</span></h1>
       <div class="toolbar-spacer"></div>
-      <button ref="voiceTrigger" class="assistant-trigger" aria-label="Открыть меню ИИ" :aria-expanded="voiceOpen" @click="voiceOpen=true"><span aria-hidden="true">☰</span><span>Помощник</span><i></i></button>
+      <button ref="voiceTrigger" class="assistant-trigger" aria-label="Открыть меню ИИ" :aria-expanded="voiceOpen" @click="voiceOpen=!voiceOpen"><MenuIcon :open="voiceOpen" /><span>Помощник</span><i></i></button>
       <CalendarViewPicker v-model="view" />
     </div>
     </Teleport>
     <div :class="['app-content',{'sidebar-collapsed':!sidebarOpen}]">
-      <aside v-if="sidebarOpen" class="calendar-sidebar">
+      <Transition name="sidebar"><aside v-if="sidebarOpen" id="calendar-sidebar" class="calendar-sidebar" @keydown.esc="sidebarOpen=false">
         <p class="sidebar-kicker">РАБОЧАЯ ОБЛАСТЬ</p><button class="create-button" @click="createCalendarEvent"><span>＋</span>Событие</button>
         <section class="mini-calendar"><div class="mini-heading"><b>{{ monthLabel }}</b><div><button class="icon-button" aria-label="Предыдущий месяц" @click="miniMonth(-1)">‹</button><button class="icon-button" aria-label="Следующий месяц" @click="miniMonth(1)">›</button></div></div><div class="mini-weekdays"><span v-for="(w,i) in ['П','В','С','Ч','П','С','В']" :key="i">{{ w }}</span></div><div class="mini-days"><button v-for="d in miniDays" :key="dateKey(d)" :class="{'muted':d.getMonth()!==fromKey(day).getMonth(),'selected':dateKey(d)===day,'today':dateKey(d)===todayKey}" @click="selectCalendarDay(dateKey(d))">{{ d.getDate() }}</button></div></section>
         <div class="sidebar-section"><h2>Мои календари <span>⌃</span></h2><div class="calendar-label"><span class="calendar-checkbox">✓</span>Мои задачи</div></div>
 
-      </aside>
+      </aside></Transition>
+      <Transition name="sidebar-shade"><button v-if="sidebarOpen" class="sidebar-scrim" aria-label="Закрыть боковую панель" @click="sidebarOpen=false"></button></Transition>
       <div class="calendar-with-suggestions"><TaskCalendar ref="calendar" :tasks="tasks" v-model:day="day" :view="view" @range-change="updateTaskRange" @select-task="contextTask=$event" @view-day="view='day'" @refresh="refreshSafely" @error="message=$event;voiceOpen=true" /></div>
     </div>
     <div v-if="message && !voiceOpen && !listening && !processing && !starting && !busy" class="calendar-toast" role="status"><span>{{ message }}</span><button aria-label="Закрыть сообщение" @click="message=''">×</button></div>

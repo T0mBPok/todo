@@ -310,3 +310,31 @@ input:focus,select:focus,textarea:focus { border-color:#c9ab98; }
   .workspace-header .section-tabs button { padding:0 7px; font-size:11px; }
   .workspace-header .toolbar-spacer { min-width:0; }
 }
+
+/* Soft panel movement and animated menu controls. */
+.app-content { transition:grid-template-columns .24s cubic-bezier(.2,.8,.2,1),gap .24s; }
+.app-content.sidebar-collapsed { grid-template-columns:0px minmax(0,1fr); gap:0; }
+.calendar-with-suggestions { grid-column:2; }
+.calendar-sidebar { min-width:0; }
+.sidebar-enter-active,.sidebar-leave-active { transition:opacity .2s,transform .24s cubic-bezier(.2,.8,.2,1); overflow:hidden; }
+.sidebar-enter-from,.sidebar-leave-to { opacity:0; transform:translateX(-18px); }
+.sidebar-scrim { display:none; }
+.workspace-header .menu-button { display:grid; place-items:center; transition:background .18s,color .18s; }
+.workspace-header .menu-button[aria-expanded=true] { background:#f5e5d8; color:var(--ember); }
+.assistant-trigger[aria-expanded=true] { background:#f5e5d8; border-color:#d3ad95; color:var(--ember); }
+.assistant-heading .drawer-close { display:grid; place-items:center; background:#f6ebe1; color:var(--ember); }
+.assistant-heading .drawer-close:hover { background:#f1d9c8; }
+.assistant-drawer[data-motion=opening]::backdrop { animation:assistant-shade-in .24s ease-out; }
+.assistant-drawer[data-motion=closing]::backdrop { animation:assistant-shade-out .18s ease-in forwards; }
+@keyframes assistant-shade-in { from{background:#231e2800;backdrop-filter:blur(0)} to{background:#231e282b;backdrop-filter:blur(2px)} }
+@keyframes assistant-shade-out { to{background:#231e2800;backdrop-filter:blur(0)} }
+@media(max-width:760px) {
+  .sidebar-scrim { display:block; position:absolute; inset:0 0 0 248px; border-radius:12px; background:#231e2826; z-index:11; padding:0; }
+  .sidebar-shade-enter-active,.sidebar-shade-leave-active { transition:opacity .2s; }
+  .sidebar-shade-enter-from,.sidebar-shade-leave-to { opacity:0; }
+  .calendar-sidebar { transition:none; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .app-content,.sidebar-enter-active,.sidebar-leave-active,.sidebar-shade-enter-active,.sidebar-shade-leave-active { transition:none; }
+  .assistant-drawer::backdrop { animation:none!important; }
+}
