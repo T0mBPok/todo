@@ -21,7 +21,7 @@ DELETE_WORDS = {
 CLEAR_WORDS = {'очисти', 'очистить', 'почисти', 'почистить', 'сбрось', 'сбросить'}
 CALENDAR_WORDS = {'календарь', 'календаря', 'календаре', 'календарик', 'календарика', 'календарике'}
 ALL_WORDS = {'все', 'весь', 'всю', 'целиком', 'полностью'}
-OBJECT_WORDS = {'задачи', 'события', 'мероприятия', 'записи', 'серии', 'повторения'}
+OBJECT_WORDS = {'дела', 'задачи', 'события', 'мероприятия', 'записи', 'серии', 'повторения'}
 FILLER_WORDS = {
     'давай', 'давайте', 'пожалуйста', 'короче', 'вообще', 'прям', 'прямо', 'нахуй', 'нахрен',
     'надо', 'нужно', 'мне', 'мой', 'моего', 'моем', 'и', 'из', 'в',
@@ -84,7 +84,7 @@ def prepare_clear(session, transcript):
         raise HTTPException(422, 'Календарь уже пуст.')
     series = series_preview(session, rows)
     ordinary = sum(not row.recurrence and row.series_parent_id is None for row in rows)
-    note = 'Что удалить в каждой серии?' if series else 'Удалить все события календаря?'
+    note = 'Удалить все перечисленные дела?'
     command = Command(
         text=transcript,
         operations=[{'entity': ENTITY, 'snapshot': fingerprint(rows), 'series': series}],
@@ -92,10 +92,10 @@ def prepare_clear(session, transcript):
     )
     session.add(command)
     commit(session)
-    return {'kind': ENTITY, 'id': command.id, 'count': len(rows), 'ordinary': ordinary, 'series': series, 'note': note}
+    return {'items': [{'id':str(row.id),'title':row.title,'start':row.start.isoformat(),'series':bool(row.recurrence)} for row in rows if row.series_parent_id is None], 'kind': ENTITY, 'id': command.id, 'count': len(rows), 'ordinary': ordinary, 'series': series, 'note': note}
 
 
-def execute_clear(session, command_id, choices):
+def execute_clear(session, command_id, choices, exclude_ids=()):
     owner_id = session.info.get('owner_id')
     if owner_id is None:
         raise HTTPException(401, 'Войдите в аккаунт.')
@@ -123,6 +123,8 @@ def execute_clear(session, command_id, choices):
     task_ids = {row.id for row in rows if not row.recurrence and row.series_parent_id is None}
     exclusions = 0
     for series_id, scope in scopes.items():
+        if by_id[series_id].id in set(exclude_ids):
+            continue
         root = by_id[series_id]
         if scope == 'series':
             task_ids.add(root.id)
@@ -142,6 +144,11 @@ def execute_clear(session, command_id, choices):
             require_occurrence(root, start)
             recurrences.exclude(root.id, start)
             exclusions += 1
+    excluded=set(exclude_ids)
+    if not excluded.issubset({row.id for row in rows}):
+        raise HTTPException(422, 'Исключённое событие не найдено в списке.')
+    protected=excluded | {row.id for row in rows if row.series_parent_id in excluded}
+    task_ids -= protected
     if task_ids:
         dao.delete_calendar(owner_id, list(task_ids))
     deleted = len(task_ids) + exclusions

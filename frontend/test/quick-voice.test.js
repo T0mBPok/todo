@@ -4,19 +4,19 @@ import assert from 'node:assert/strict'
 import {readFile} from 'node:fs/promises'
 const component=await readFile(new URL('../src/CalendarApp.vue',import.meta.url),'utf8')
 const script=component.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm,'')
-function setup({response,error,confirmError}={}) {
+function setup({response,error,confirmError,voiceFactory}={}) {
   let callbacks, toggles=0,cancels=0,confirms=0,requests=0
   const ref=value=>({value}), computed=get=>({get value(){return get()}})
   const hook={supported:true,listening:ref(false),processing:ref(false),starting:ref(false),audioUrl:ref(''),rawTranscript:ref(''),engineName:ref(''),elapsed:ref(0),recordSeconds:ref(0),toggle:async()=>{toggles++;hook.listening.value=!hook.listening.value},cancel:()=>{cancels++;hook.listening.value=false}}
   const deps={errorMessage,defineProps:()=>({refreshToken:0}),ref,computed,watch:()=>{},nextTick:async()=>{},onMounted:()=>{},window:{innerWidth:1280},
-    useVoiceInput:options=>{callbacks=options;return hook},
+    useVoiceInput:options=>{callbacks=options;return voiceFactory ? voiceFactory(options) : hook},
     request:async path=>{requests++;if(error)throw Error(error);return path.endsWith('/execute')?{note:'Готово',tasks:[]}:path.endsWith('/clear-calendar')?{note:'Календарь очищен.'}:typeof response === 'function' ? response(requests) : response},
     listTasks:async()=>[],visibleRange:()=>({}),localDate:value=>new Date(value).toISOString().slice(0,16),
     dateKey:()=>'',fromKey:()=>new Date(),monthDays:()=>[],
     confirmPlan:async()=>{confirms++;if(confirmError)throw Error(confirmError);return [{id:'saved',start:'2026-10-20T18:00:00Z'}]}}
-  const expose='return {quickMic,cancelQuick,voiceOpen,quickMode,text,message,command,plan,autoSave,busy,generate,planEditor,clearCalendarDraft,confirmCalendarClear}'
+  const expose='return {quickMic,cancelQuick,voiceOpen,quickMode,text,message,command,plan,autoSave,busy,generate,planEditor,clearCalendarDraft,confirmCalendarClear,choices,excludeDeletion}'
   const app=new Function(...Object.keys(deps),script+'\n'+expose)(...Object.values(deps))
-  return {app,hook,status:()=>({toggles,cancels,confirms,requests}),async finish(text){hook.listening.value=false;hook.rawTranscript.value=text;app.text.value=text;await callbacks.onComplete()},fail:value=>callbacks.onError(value)}
+  return {app,hook,status:()=>({toggles,cancels,confirms,requests}),async finish(text){hook.listening.value=false;hook.rawTranscript.value=text;app.text.value=text;await callbacks.onComplete()},async transcribe(corrected,raw=corrected){hook.listening.value=false;hook.rawTranscript.value=raw;app.text.value=corrected;await callbacks.onComplete()},fail:value=>callbacks.onError(value)}
 }
 test('quick recording starts immediately without opening the panel, second click stops it',async()=>{
   const {app,hook,status}=setup();await app.quickMic()
@@ -26,16 +26,18 @@ test('quick recording starts immediately without opening the panel, second click
 test('successful quick plan saves and keeps the calendar visible',async()=>{
   const s=setup({response:{kind:'plan',plan:{id:'plan',tasks:[{start:'2026-10-20T18:00:00Z'}]}}})
   await s.app.quickMic();await s.finish('Завтра тренировка в шесть')
-  assert.equal(s.status().confirms,1);assert.equal(s.app.voiceOpen.value,false)
-  assert.match(s.app.message.value,/Добавлено в календарь/)
+  assert.equal(s.status().confirms,1);assert.equal(s.app.voiceOpen.value,true)
+  assert.equal(s.app.text.value,'Завтра тренировка в шесть')
+  assert.match(s.app.message.value,/добавлены в календарь/)
 })
-test('multi-event or flagged plans open the editable preview before saving', async () => {
+test('flagged plans open the editable preview before saving', async () => {
   const task = { start: '2026-10-20T18:00:00Z' }
-  for (const plan of [{ tasks: [task, task], review: [] }, { tasks: [task], review: [{ task_index: 0 }] }]) {
+  for (const plan of [{ tasks: [task, task], review: [{ task_index: 0 }] }, { tasks: [task], review: [{ task_index: 0 }] }]) {
     const s = setup({ response: { kind: 'plan', plan: { id: 'plan', ...plan } } })
     await s.app.quickMic()
     await s.finish('Длинная команда')
     assert.equal(s.status().confirms, 0)
+    assert.equal(s.app.text.value, 'Длинная команда')
     assert.equal(s.app.voiceOpen.value, true)
     let saved = false
     s.app.planEditor.value = { save: async () => { saved = true } }
@@ -130,4 +132,86 @@ test('mixed replacement retains both additions and waits for confirmation',async
   assert.equal(s.app.command.value.operations.at(-1).instruction.operation,'create')
   assert.equal(s.status().requests,1);assert.equal(s.app.voiceOpen.value,true)
   await s.finish('подтверждаю');assert.equal(s.status().requests,2)
+})
+
+
+test('AI transcript stays editable and automatically sends the corrected command once',async()=>{
+  const s=setup({response:{kind:'plan',plan:{id:'plan',tasks:[{start:'2026-10-20T18:00:00Z'}]}}})
+  await s.app.quickMic()
+  await s.transcribe('Завтра тренировка с 18:00 до 19:00.','Завтра тренеровка с 18:0 до 19:0.')
+  assert.equal(s.app.text.value,'Завтра тренировка с 18:00 до 19:00.')
+  assert.equal(s.app.voiceOpen.value,true)
+  assert.equal(s.hook.rawTranscript.value,'Завтра тренеровка с 18:0 до 19:0.')
+  assert.equal(s.status().requests,1)
+  assert.equal(s.status().confirms,1)
+})
+
+
+test('several confident events auto-save after speech without an extra submit',async()=>{
+  const tasks=[{start:'2026-10-20T18:00:00Z'},{start:'2026-10-21T08:00:00Z'}]
+  const s=setup({response:{kind:'plan',plan:{id:'plan',tasks,review:[]}}})
+  await s.transcribe('Завтра тренировка в 18:00. Послезавтра созвон в 08:00.')
+  assert.equal(s.status().requests,1)
+  assert.equal(s.status().confirms,1)
+  assert.equal(s.app.plan.value,null)
+  assert.equal(s.app.text.value,'Завтра тренировка в 18:00. Послезавтра созвон в 08:00.')
+})
+
+
+test('final AI transcript appears in the input while success status stays short',async()=>{
+  const corrected='В четверг военная кафедра с 08:00 до 17:00.'
+  const s=setup({response:{kind:'plan',plan:{id:'plan',tasks:[{start:'2026-10-22T08:00:00Z'}],
+    normalized_text:corrected,note:'Понял: Военная кафедра. Нормализованный текст: '+corrected}}})
+  await s.transcribe('В четверг там кафедра с восьми до пяти.')
+  assert.equal(s.app.text.value,corrected)
+  assert.equal(s.app.message.value,'Задачи добавлены в календарь: 1.')
+  assert.doesNotMatch(s.app.message.value,/Нормализованный|кафедра/)
+  assert.equal(s.status().confirms,1)
+})
+
+
+test('bulk delete excludes a chip and sends one confirmation for the remaining list',async()=>{
+ const operations=[0,1,2].map(i=>({bulk_delete:true,requires_confirmation:true,instruction:{operation:'delete',scope:'occurrence'},candidates:[{id:String(i),title:'Event '+i,start:'2026-11-23T08:00:00Z'}]}))
+ const s=setup({response:{kind:'command',id:'bulk',operations}})
+ await s.finish('Удали все события следующей недели')
+ s.app.excludeDeletion(1)
+ assert.equal(s.app.choices.value[1].skip,true)
+ assert.equal(s.status().requests,1)
+ await s.finish('подтверждаю')
+ assert.equal(s.status().requests,2)
+ assert.equal(s.app.command.value,null)
+})
+
+
+test('real recorder completion automatically transcribes, prepares and saves without a submit click',async()=>{
+ const source=(await readFile(new URL('../src/features/voice/useVoiceInput.js',import.meta.url),'utf8'))
+   .replace("import { ref, onUnmounted } from 'vue'","const ref=value=>({value}); const onUnmounted=()=>{}")
+   .replace("'../../shared/api'",JSON.stringify(new URL('../src/shared/api.js',import.meta.url).href))
+ const {useVoiceInput}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'))
+ let recorder,uploads=0
+ const oldNavigator=Object.getOwnPropertyDescriptor(globalThis,'navigator')
+ const oldWindow=globalThis.window,oldRecorder=globalThis.MediaRecorder,oldFetch=globalThis.fetch
+ class Recorder {
+   static isTypeSupported(){return true}
+   constructor(){recorder=this;this.mimeType='audio/webm';this.state='inactive'}
+   start(){this.state='recording'}
+   stop(){this.state='inactive';this.ondataavailable({data:new Blob(['audio'])});this.finished=this.onstop()}
+ }
+ try {
+   Object.defineProperty(globalThis,'navigator',{configurable:true,value:{mediaDevices:{getUserMedia:async()=>({getTracks:()=>[{stop(){}}]})}}})
+   globalThis.window={MediaRecorder:Recorder};globalThis.MediaRecorder=Recorder
+   globalThis.fetch=async(url)=>{uploads++;assert.equal(url,'/api/voice/transcribe');return {ok:true,json:async()=>({text:'Завтра тренировка в 18:00.',raw_text:'завтра тренеровка в 18:00'})}}
+   const s=setup({voiceFactory:useVoiceInput,response:{kind:'plan',plan:{id:'plan',tasks:[{start:'2026-11-21T11:00:00Z'}],review:[]}}})
+   await s.app.quickMic()
+   await s.app.quickMic()
+   await recorder.finished
+   assert.equal(uploads,1)
+   assert.equal(s.status().requests,1)
+   assert.equal(s.status().confirms,1)
+   assert.equal(s.app.text.value,'Завтра тренировка в 18:00.')
+   assert.equal(s.app.busy.value,false)
+ } finally {
+   if(oldNavigator)Object.defineProperty(globalThis,'navigator',oldNavigator);else delete globalThis.navigator
+   globalThis.window=oldWindow;globalThis.MediaRecorder=oldRecorder;globalThis.fetch=oldFetch
+ }
 })

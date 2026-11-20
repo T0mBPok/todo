@@ -16,4 +16,4 @@ def execute(command_id:UUID,data:Execute,session:Session=Depends(get_session)):
 
 @router.post('/{command_id}/clear-calendar')
 def clear_calendar(command_id: UUID, data: ClearCalendar | None = None, session: Session = Depends(get_session)):
-    return execute_clear(session, command_id, data.choices if data else [])
+    return execute_clear(session, command_id, data.choices if data else [], data.exclude_ids if data else [])

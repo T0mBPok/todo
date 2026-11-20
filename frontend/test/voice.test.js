@@ -28,18 +28,19 @@ function setup({ denied = false } = {}) {
   globalThis.MediaRecorder = Recorder
   globalThis.fetch = async (url, options) => {
     posted++; assert.equal(url, '/api/voice/transcribe'); assert.ok(options.body instanceof Blob)
-    return { ok: true, json: async () => ({ text: 'Завтра встреча' }) }
+    return { ok: true, json: async () => ({ text: 'Завтра встреча', raw_text: 'Завтра встрича' }) }
   }
   const text = { value: '' }
   const hook = useVoiceInput({ text, onComplete: () => { completed++ }, onError: value => { error = value } })
   return { hook, text, recorder: () => recorder, status: () => ({ stopped, completed, error, posted }) }
 }
 
-test('records audio, transcribes and triggers planning once', async () => {
+test('records audio and exposes corrected text separately from raw speech', async () => {
   const state = setup()
   await state.hook.toggle(); assert.equal(state.hook.listening.value, true)
   await state.hook.toggle(); await state.recorder().finished
   assert.equal(state.text.value, 'Завтра встреча')
+  assert.equal(state.hook.rawTranscript.value, 'Завтра встрича')
   assert.deepEqual(state.status(), { stopped: 1, completed: 1, error: '', posted: 1 })
   assert.equal(state.hook.processing.value, false)
 })

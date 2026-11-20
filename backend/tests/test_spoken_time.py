@@ -105,3 +105,45 @@ def test_multi_event_voice_command_preserves_each_local_time(client, monkeypatch
         actual = {event['title']: tuple(datetime.fromisoformat(event[key]).astimezone(zone).isoformat()
                                        for key in ('start', 'end')) for event in events}
         assert actual == expected
+
+
+@pytest.mark.parametrize('zone_name', ['Asia/Tomsk', 'Europe/Moscow'])
+@pytest.mark.parametrize(('clock', 'expected'), [
+    ('08:00 утра', '08:00'), ('08:00 вечера', '20:00'),
+    ('12:00 дня', '12:00'), ('12:00 ночи', '00:00'),
+    ('11:30 ночи', '23:30'), ('18:00', '18:00'),
+])
+def test_time_validation_preserves_daypart_instead_of_overriding_it(zone_name, clock, expected):
+    from app.tasks.schemas import TaskInput
+    from app.plans.dates import enforce_spoken_time
+    task = TaskInput(title='Созвон', start='2026-11-23T08:00:00Z', end='2026-11-23T09:00:00Z')
+    zone = ZoneInfo(zone_name)
+    enforce_spoken_time([task], f'Созвон в {clock}.', zone_name)
+    assert task.start.astimezone(zone).strftime('%H:%M') == expected
+    assert task.end - task.start == timedelta(hours=1)
+
+
+@pytest.mark.parametrize('zone_name', ['Asia/Tomsk', 'Europe/Moscow'])
+def test_explicit_evening_range_survives_model_utc_error_through_save(client, monkeypatch, zone_name):
+    api, _ = client
+    zone = ZoneInfo(zone_name)
+    day = (datetime.now(zone).date() + timedelta(days=1)).isoformat()
+    text = 'Пожалуйста, завтра организуй созвон в 08:00 вечера.'
+    monkeypatch.setattr(ai.config, 'AI_PROVIDER', 'gigachat')
+    monkeypatch.setattr(grounded_ai, 'interpret_calendar', lambda *args: grounded_ai.Decision(
+        intent='create', note='', create_text='Завтра созвон'))
+    wrong = ai.ExtractedPlan(tasks=[{'title':'Созвон','start':day+'T20:00:00Z',
+        'end':day+'T21:00:00Z'}],note='',needs_clarification=False)
+    def model(url, **kwargs):
+        payload=kwargs['json']
+        content = json.dumps({'text':text,'note':''}) if 'text' in payload['format'].get('properties',{}) else wrong.model_dump_json()
+        return httpx.Response(200,request=httpx.Request('POST',url),json={'message':{'content':content}})
+    monkeypatch.setattr(ai,'ai_post',model)
+    response=api.post('/api/commands',json={'text':text,'timezone':zone_name})
+    assert response.status_code==200,response.text
+    draft=response.json()['plan']
+    response=api.post(f"/api/plans/{draft['id']}/confirm",json={'tasks':draft['tasks']})
+    assert response.status_code==200,response.text
+    event=api.get('/api/tasks').json()[0]
+    assert datetime.fromisoformat(event['start']).astimezone(zone).isoformat() == f'{day}T20:00:00{datetime.now(zone).strftime("%z")[:3]}:00'
+    assert datetime.fromisoformat(event['end']).astimezone(zone).strftime('%H:%M')=='21:00'

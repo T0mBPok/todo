@@ -15,20 +15,20 @@ const tasks=ref([]),text=ref(''),title=ref(''),description=ref(''),message=ref('
 const visible=computed(()=>tasks.value.filter(t=>(filter.value==='all'||(filter.value==='done'?t.completed:!t.completed))&&(categoryFilter.value==='all'||t.category===categoryFilter.value)))
 const activeCount=computed(()=>tasks.value.filter(t=>!t.completed).length)
 async function refresh(){tasks.value=await request('/todos')}
-const {supported,listening,starting,processing,toggle,cancel,recordSeconds}=useVoiceInput({text,onComplete:interpret,onError:value=>{message.value=value;assistantOpen.value=true}})
+const {supported,listening,starting,processing,toggle,cancel,recordSeconds}=useVoiceInput({text,onComplete:async()=>{assistantOpen.value=true;await interpret()},onError:value=>{message.value=value;assistantOpen.value=true}})
 async function run(work){busy.value=true;try{await work();await refresh()}catch(error){message.value=errorMessage(error)}finally{busy.value=false}}
 async function add(){if(!title.value.trim())return;await run(async()=>{const selected=category.value;await request('/todos','POST',{title:title.value,description:description.value,category:selected});title.value='';description.value='';message.value='Задача добавлена.'})}
 async function complete(task){await run(()=>request('/todos/'+task.id,'PUT',{title:task.title,description:task.description,category:task.category,completed:!task.completed}))}
 async function save(){await run(async()=>{await request('/todos/'+editing.value.id,'PUT',{title:editing.value.title,description:editing.value.description,category:editing.value.category,completed:editing.value.completed});editing.value=null})}
 async function remove(task){assistantOpen.value=true;draft.value={manual:task,note:'Удалить задачу «'+task.title+'»?'}}
-async function execute(){if(!draft.value)return;await run(async()=>{if(draft.value.manual)await request('/todos/'+draft.value.manual.id,'DELETE');else await request('/todos/commands/'+draft.value.id+'/execute','POST');draft.value=null;text.value='';message.value='Готово. Список обновлён.'})}
+async function execute(){if(!draft.value)return;await run(async()=>{if(draft.value.manual)await request('/todos/'+draft.value.manual.id,'DELETE');else await request('/todos/commands/'+draft.value.id+'/execute','POST');draft.value=null;message.value='Готово. Список обновлён.'})}
 async function interpret(){
  if(busy.value||!text.value.trim())return
  const utterance=text.value.trim()
  if(draft.value && /^(подтверждаю|удаляй|выполни|да)[.! ]*$/i.test(utterance)){await execute();return}
  if(draft.value && /^(отмена|отмени|нет)[.! ]*$/i.test(utterance)){draft.value=null;text.value='';message.value='Отменено.';return}
  busy.value=true;message.value='Разбираю задачи…';draft.value=null
- try{const result=await request('/todos/commands/prepare','POST',{text:utterance,history:history.value});history.value=[...history.value,{role:'user',text:utterance.slice(0,1500)},{role:'assistant',text:result.note.slice(0,1500)}].slice(-8);draft.value=result;message.value=result.note;text.value='';busy.value=false;if(!result.requires_confirmation)await execute()}
+ try{const result=await request('/todos/commands/prepare','POST',{text:utterance,history:history.value});history.value=[...history.value,{role:'user',text:utterance.slice(0,1500)},{role:'assistant',text:result.note.slice(0,1500)}].slice(-8);draft.value=result;message.value=result.note;busy.value=false;if(!result.requires_confirmation)await execute()}
  catch(error){message.value=errorMessage(error);history.value=[...history.value,{role:'user',text:utterance.slice(0,1500)},{role:'assistant',text:errorMessage(error).slice(0,1500)}].slice(-8)}finally{busy.value=false}
 }
 function mic(){message.value='';toggle()}

@@ -2,11 +2,30 @@ import re
 from datetime import datetime,timedelta
 from zoneinfo import ZoneInfo
 from app.recurrences.schemas import RecurrenceRule
-from app.plans.dates import words,WEEKDAYS
+from app.plans.dates import words,WEEKDAYS,ANCHOR,SENTENCE_BREAK
 
 DAY=r'(?:понедельник[а-яё]*|вторник[а-яё]*|сред[а-яё]*|четверг[а-яё]*|пятниц[а-яё]*|суббот[а-яё]*|воскресень[а-яё]*)'
 DAY_LIST=DAY+r'(?:\s*(?:,\s*(?:и\s+)?|и\s+|а\s+также\s+)(?:кажд[а-яё]*\s+|по\s+)?'+DAY+r')*'
 PATTERN=re.compile(r'\b(?:(?:кажд[а-яё]*|по)\s+('+DAY_LIST+r')|(ежедневно|каждый\s+день)|(еженедельно))\b',re.I)
+
+# A neighbouring weekday belongs to its own event, not to this series.
+CLAUSE_BOUNDARY = re.compile(r',|\s+(?:а|и|потом|затем)\s+', re.I)
+
+
+def recurrence_fragment(text, match):
+    breaks = list(SENTENCE_BREAK.finditer(text))
+    left = max((item.end() for item in breaks if item.end() <= match.start()), default=0)
+    right = min((item.start() for item in breaks if item.start() >= match.end()), default=len(text))
+    previous = [item for item in ANCHOR.finditer(text, left, match.start())]
+    if previous:
+        boundaries = list(CLAUSE_BOUNDARY.finditer(text, previous[-1].end(), match.start()))
+        left = boundaries[-1].end() if boundaries else match.start()
+    following = ANCHOR.search(text, match.end(), right)
+    if following:
+        boundaries = list(CLAUSE_BOUNDARY.finditer(text, match.end(), following.start()))
+        right = boundaries[-1].start() if boundaries else following.start()
+    return text[left:match.start()] + ' ' + text[match.end():right]
+
 
 def apply_spoken_recurrence(tasks,text,timezone,now=None):
     matches=list(PATTERN.finditer(text))
@@ -20,17 +39,14 @@ def apply_spoken_recurrence(tasks,text,timezone,now=None):
     if not matches:
         return tasks
     segments=[]
-    for index,match in enumerate(matches):
-        end=matches[index+1].start() if index+1<len(matches) else len(text)
-        prefix=text[max(0,match.start()-80):match.start()]
-        prefix=re.split(r'[.!?;]',prefix)[-1]
-        segments.append(words(prefix+' '+text[match.end():end]))
+    for match in matches:
+        segments.append(words(recurrence_fragment(text, match)))
     seen=set(); result=[]
     for task in tasks:
         scores=[sum(token in segment for token in words(task.title)) for segment in segments]
         best=max(scores,default=0)
         candidates=[i for i,score in enumerate(scores) if score==best]
-        if len(tasks)==1 and len(matches)==1: selected=0
+        if len(tasks)==1 and len(matches)==1 and best: selected=0
         elif best and len(candidates)==1: selected=candidates[0]
         else:
             result.append(task);continue

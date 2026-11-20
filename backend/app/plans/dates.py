@@ -65,8 +65,23 @@ SENTENCE_BREAK = re.compile(r'\.(?!\d)|[!?;]')
 CLAUSE_BREAK = re.compile(r',\s*|\s+(?:и|а|потом|затем)\s+', re.I)
 
 
+DAYPART_CLOCK = re.compile(rf'({CLOCK})\s+(утра|дня|вечера|ночи)\b', re.I)
+
+
+def normalize_clock_dayparts(text):
+    """Keep explicit day parts when checking the model's local wall time."""
+    def replace(match):
+        hour, minute = map(int, match[1].split(':'))
+        if hour <= 12:
+            part = match[2].casefold()
+            pm = part in {'дня', 'вечера'} or part == 'ночи' and 10 <= hour < 12
+            hour = hour % 12 + (12 if pm else 0)
+        return f'{hour:02d}:{minute:02d}'
+    return DAYPART_CLOCK.sub(replace, normalize_clock_minutes(text))
+
+
 def spoken_slots(text):
-    for sentence in SENTENCE_BREAK.split(normalize_clock_minutes(text)):
+    for sentence in SENTENCE_BREAK.split(normalize_clock_dayparts(text)):
         sentence = DETAIL_MARKER.split(sentence, maxsplit=1)[0]
         clock_count = len(re.findall(CLOCK, sentence))
         if clock_count > 1 and re.search(r'\b(?:ой[,\s]+нет|точнее|пардон)\b', sentence, re.I):
@@ -158,6 +173,17 @@ def enforce_date_context(tasks, text, timezone, now=None):
     anchors=list(ANCHOR.finditer(text))
     if not anchors:
         return tasks
+    # A date may precede or follow its event: «в четверг кафедра» and
+    # «кафедра в четверг». Do not attach the latter title to the previous day.
+    starts=[]
+    for i, match in enumerate(anchors):
+        sentence_start=max((item.end() for item in SENTENCE_BREAK.finditer(text[:match.start()])), default=0)
+        if i and anchors[i-1].end() > sentence_start:
+            boundaries=list(CLAUSE_BREAK.finditer(text, anchors[i-1].end(), match.start()))
+            left=boundaries[-1].end() if boundaries else match.start()
+        else:
+            left=sentence_start
+        starts.append(left)
     segments=[]
     for i, match in enumerate(anchors):
         day=resolve_anchor(match.group(),today)
@@ -169,8 +195,9 @@ def enforce_date_context(tasks, text, timezone, now=None):
         before=text[max(0,match.start()-20):match.start()].lower()
         if explicit is None and 'следующ' in before and day == today:
             day += timedelta(days=7)
-        end=anchors[i+1].start() if i+1<len(anchors) else len(text)
-        segments.append((day,words(text[match.end()+consumed:end])))
+        end=starts[i+1] if i+1<len(anchors) else len(text)
+        fragment=text[starts[i]:match.start()]+' '+text[match.end()+consumed:end]
+        segments.append((day,words(fragment)))
     for task in tasks:
         title=words(task.title)
         scores=[sum(1 for word in title if word in segment) for _,segment in segments]

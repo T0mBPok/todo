@@ -33,6 +33,7 @@ class Interpretation(BaseModel):
     intent: Literal['create','manage']
     operations: list[Operation]=Field(default_factory=list,max_length=30)
 class Choice(BaseModel):
+    skip: bool=False
     candidate: int=Field(ge=0)
     scope: Literal['occurrence','series']|None=None
 class Execute(BaseModel):
@@ -45,4 +46,5 @@ class ClearSeriesChoice(BaseModel):
 
 
 class ClearCalendar(BaseModel):
+    exclude_ids: list[UUID] = Field(default_factory=list, max_length=10000)
     choices: list[ClearSeriesChoice] = Field(default_factory=list)

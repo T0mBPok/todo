@@ -19,7 +19,11 @@ const command=ref(null), choices=ref([]), contextTask=ref(null)
 const planEditor = ref(null)
 const clearCalendarDraft = ref(null)
 const clearScopes = ref({})
-const clearReady = computed(() => clearCalendarDraft.value &&
+const clearExcluded = ref([])
+const bulkDelete = computed(() => command.value?.operations?.every(op=>op.instruction.operation==='delete' && op.candidates.length===1) && (command.value.operations.length>1 || command.value.operations.some(op=>op.bulk_delete)))
+function excludeDeletion(index) { choices.value[index].skip=true }
+function excludeClear(id) { clearExcluded.value=[...clearExcluded.value,id] }
+const clearReady = computed(() => clearCalendarDraft.value && (!clearCalendarDraft.value.items || clearCalendarDraft.value.items.some(item=>!clearExcluded.value.includes(item.id))) &&
   (clearCalendarDraft.value.series || []).every(item => clearScopes.value[item.series_id]))
 const text = ref(''), message = ref(''), plan = ref(null), tasks = ref([]), busy = ref(false), aiReady = ref(null)
 const lastTranscript = ref(''), normalizedText = ref(''), savedTasks = ref([])
@@ -61,7 +65,15 @@ function createCalendarEvent() {
 }
 function closeVoice() { quickMode.value=true; voiceOpen.value=false }
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
-const { supported, listening, processing, starting, toggle, cancel, audioUrl, rawTranscript, engineName, elapsed, recordSeconds } = useVoiceInput({ text, onComplete: () => generate(true), onError: showVoiceError })
+const { supported, listening, processing, starting, toggle, cancel, audioUrl, rawTranscript, engineName, elapsed, recordSeconds } = useVoiceInput({ text, onComplete: transcriptReady, onError: showVoiceError })
+async function transcriptReady() {
+  lastTranscript.value = rawTranscript.value
+  normalizedText.value = text.value
+  assistantTab.value = 'voice'
+  voiceOpen.value = true
+  quickMode.value = false
+  await generate(true)
+}
 function showVoiceError(value) { message.value=value; assistantTab.value='voice'; voiceOpen.value=true }
 async function quickMic() {
   if(busy.value || processing.value || starting.value) return
@@ -82,14 +94,14 @@ async function refresh() { const version=++refreshVersion; const result=await li
 watch(taskRange,()=>refreshSafely())
 async function refreshSafely() { try { await refresh() } catch (error) { message.value = errorMessage(error) } }
 function readyCommand() {
-  return command.value && choices.value.every((c,i)=>c.candidate!==null && (command.value.operations[i].instruction.operation==='create' || !(command.value.operations[i].candidates[c.candidate].recurrence || command.value.operations[i].candidates[c.candidate].series_parent_id) || c.scope))
+  return command.value && choices.value.some(c=>!c.skip) && choices.value.every((c,i)=>c.skip || c.candidate!==null && (command.value.operations[i].instruction.operation==='create' || !(command.value.operations[i].candidates[c.candidate].recurrence || command.value.operations[i].candidates[c.candidate].series_parent_id) || c.scope))
 }
 async function executeCommand() {
   if(!readyCommand()) { message.value='Выбери задачу и область изменения.'; return }
   busy.value=true
   try {
     const result=await request(`/commands/${command.value.id}/execute`,'POST',{choices:choices.value})
-    message.value=result.note; savedTasks.value=result.tasks; command.value=null; text.value=''
+    message.value=result.note; savedTasks.value=result.tasks; command.value=null
     if(result.tasks.length) {contextTask.value=result.tasks[0];day.value=localDate(result.tasks[0].start).slice(0,10)}
     await refreshSafely()
   } catch(error) { showVoiceError(errorMessage(error)) }
@@ -115,9 +127,8 @@ async function confirmCalendarClear() {
     const choices = (clearCalendarDraft.value.series || []).map(item => ({
       series_id: item.series_id, scope: clearScopes.value[item.series_id]
     }))
-    const result = await request(`/commands/${clearCalendarDraft.value.id}/clear-calendar`, 'POST', { choices })
+    const result = await request(`/commands/${clearCalendarDraft.value.id}/clear-calendar`, 'POST', { choices, exclude_ids:clearExcluded.value })
     clearCalendarDraft.value = null
-    text.value = ''
     savedTasks.value = []
     contextTask.value = null
     message.value = result.note
@@ -198,30 +209,31 @@ async function generate(fromVoice = false) {
     commandHistory.value=[...commandHistory.value,{role:'user',text:utterance.slice(0,1500)},{role:'assistant',text:(response.note||response.plan?.note||'').slice(0,1500)}].slice(-8)
     if (response.kind === 'calendar_clear') {
       clearCalendarDraft.value = response
-      clearScopes.value = {}
-      text.value = ''
+      clearExcluded.value=[]
+      clearScopes.value = Object.fromEntries((response.items ? response.series||[] : []).map(item=>[item.series_id,'series']))
       message.value = ''
       voiceOpen.value = true
     } else if(response.kind==='command') {
       command.value=response
-      choices.value=response.operations.map(o=>({candidate:o.candidates.length===1?0:null,scope:o.instruction.scope==='unspecified'?null:o.instruction.scope}))
-      text.value='';message.value=response.note
+      choices.value=response.operations.map(o=>({candidate:o.candidates.length===1?0:null,scope:o.instruction.scope==='unspecified'?(response.operations.every(op=>op.instruction.operation==='delete' && op.candidates.length===1) && response.operations.length>1?'occurrence':null):o.instruction.scope}))
+      message.value=response.note
       busy.value=false
       if(autoSave.value && readyCommand() && !response.operations.some(o=>o.requires_confirmation)) await executeCommand()
     } else {
       const result=response.plan;plan.value=result;normalizedText.value=result.normalized_text||''
-      if(autoSave.value && result.tasks.length === 1 && !result.review?.length) {savedTasks.value=await confirmPlan(result.id,result.tasks);contextTask.value=savedTasks.value.length===1?savedTasks.value[0]:null;await saved(localDate(result.tasks[0].start).slice(0,10))}
-      else {text.value='';message.value='Проверь предложенные события перед сохранением.';voiceOpen.value=true}
+      if (normalizedText.value.trim()) text.value = normalizedText.value
+      if(autoSave.value && result.tasks.length > 0 && !result.review?.length) {savedTasks.value=await confirmPlan(result.id,result.tasks);contextTask.value=savedTasks.value.length===1?savedTasks.value[0]:null;await saved(localDate(result.tasks[0].start).slice(0,10))}
+      else {message.value='Проверь предложенные события перед сохранением.';voiceOpen.value=true}
     }
   } catch(error) {commandHistory.value=[...commandHistory.value,{role:'user',text:utterance.slice(0,1500)},{role:'assistant',text:errorMessage(error).slice(0,1500)}].slice(-8);showVoiceError(errorMessage(error))}
   finally {busy.value=false;if(quickMode.value && (command.value || plan.value)) voiceOpen.value=true}
 }
 function submitText() { cancel(); generate(false) }
 function mic() { quickMode.value=false; if (!listening.value) message.value = 'Говори, затем нажми «Завершить запись».'; toggle() }
-function retryTranscript() { text.value = rawTranscript.value || lastTranscript.value; message.value = 'Исправь текст и отправь снова. Уже добавленные задачи можно изменить в календаре.' }
+function retryTranscript() { text.value = normalizedText.value || rawTranscript.value || lastTranscript.value; message.value = 'Исправь текст и отправь снова. Уже добавленные задачи можно изменить в календаре.' }
 const displayTime = value => new Date(value).toLocaleString('ru-RU', { weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })
-async function saved(date, note = plan.value?.note) {
-  day.value = date; plan.value = null; text.value = ''; message.value = quickMode.value ? `Добавлено в календарь: ${savedTasks.value.length || 1}.` : 'Задачи добавлены в календарь.' + (note ? ' ' + note : '')
+async function saved(date) {
+  day.value = date; plan.value = null; message.value = 'Задачи добавлены в календарь: ' + (savedTasks.value.length || 1) + '.'
   await refreshSafely()
 }
 async function savedFromPreview(date, events) {
@@ -276,12 +288,13 @@ watch(()=>props.refreshToken,()=>refreshSafely())
         <div v-if="aiReady===false" class="notice">ИИ не настроен или недоступен. Проверь настройки выбранного провайдера.</div>
         <button :class="['record-main-button',{'recording':listening}]" :disabled="!supported||busy||processing||starting" @click="mic"><span class="mic-symbol"><template v-if="listening">■</template><MicIcon v-else /></span><b>{{ processing?'Распознаю речь…':starting?'Подключаю микрофон…':listening?'Завершить запись':'Нажми и говори' }}</b><small>{{ listening?recordSeconds+' с · до 90 секунд':'Например: «Каждый вторник в 18:00 тренировка»' }}</small></button>
         <button v-if="listening||starting||processing" class="cancel-record-button panel-cancel-record" @click="cancelQuick">× Отменить запись</button>
-        <form @submit.prevent="submitText"><label>Что нужно сделать?<textarea v-model="text" :disabled="busy||listening||processing||starting" required maxlength="6000" placeholder="Можно продиктовать или написать здесь…"></textarea></label><label class="auto-save"><input v-model="autoSave" type="checkbox" :disabled="busy||listening||processing||starting">Автоматически выполнять однозначные команды</label><button class="primary-button voice-submit" :disabled="busy||listening||processing||starting||!text.trim()">{{ busy?'Составляю расписание…':autoSave?'Выполнить команду':'Показать результат' }}</button></form>
+        <form @submit.prevent="submitText"><label>Что нужно сделать?<textarea class="voice-command-text" v-model="text" :disabled="busy||listening||processing||starting" required maxlength="6000" placeholder="Можно продиктовать или написать здесь…"></textarea></label><label class="auto-save"><input v-model="autoSave" type="checkbox" :disabled="busy||listening||processing||starting">Автоматически выполнять однозначные команды</label><button class="primary-button voice-submit" :disabled="busy||listening||processing||starting||!text.trim()">{{ busy?'Составляю расписание…':autoSave?'Выполнить команду':'Показать результат' }}</button></form>
         <p v-if="!supported" class="notice">Запись недоступна в этом браузере. Можно ввести текст.</p>
         <p v-if="message||processing" class="voice-status" role="status" aria-live="polite">{{ processing?'Распознаю запись локально…':message }}</p>
         <section v-if="clearCalendarDraft" class="preview calendar-clear-review" aria-labelledby="calendar-clear-title">
           <h3 id="calendar-clear-title">{{ clearCalendarDraft.note }}</h3>
-          <p>Разовых событий к удалению: {{ clearCalendarDraft.ordinary }}.</p>
+          <div v-if="clearCalendarDraft.items" class="delete-list"><p>Удалить все перечисленные дела? Повторяющиеся серии будут удалены целиком.</p><article v-for="item in clearCalendarDraft.items.filter(item=>!clearExcluded.includes(item.id))" :key="item.id" class="delete-chip"><div><strong>{{ item.title }}</strong><small>{{ displayTime(item.start) }}{{ item.series?' · Вся серия':'' }}</small></div><button type="button" :aria-label="'Исключить '+item.title" @click="excludeClear(item.id)" :disabled="busy">×</button></article></div>
+          <template v-else><p>Разовых событий к удалению: {{ clearCalendarDraft.ordinary }}.</p>
           <div v-if="clearCalendarDraft.series?.length > 1">
             <button type="button" class="link" :disabled="busy" @click="chooseClearScopes('occurrence')">По одному повторению</button>
             <button type="button" class="link" :disabled="busy" @click="chooseClearScopes('series')">Все серии целиком</button>
@@ -297,21 +310,37 @@ watch(()=>props.refreshToken,()=>refreshSafely())
               Вся серия
             </label>
           </fieldset>
-          <p>Можно сказать «подтверждаю очистку календаря».</p>
+          </template><p>Можно сказать «подтверждаю очистку календаря».</p>
           <div>
             <button type="button" class="outline-button" :disabled="busy" @click="cancelCalendarClear">Отмена</button>
             <button type="button" class="calendar-clear-button" :disabled="busy || !clearReady" @click="confirmCalendarClear">Подтвердить удаление</button>
           </div>
         </section>
-        <section v-if="audioUrl||lastTranscript" class="speech-result"><div class="result-heading"><h3>{{ audioUrl?'Твоя запись':'Исходный текст' }}</h3><span v-if="engineName" class="engine-badge">{{ engineName }}<template v-if="elapsed"> · {{ elapsed }} с</template></span></div><audio v-if="audioUrl" :src="audioUrl" controls preload="metadata" aria-label="Прослушать последнюю запись"></audio><details v-if="lastTranscript"><summary>Расшифровка и исправления</summary><h4>Распознано из аудио</h4><p>{{ rawTranscript||lastTranscript }}</p><template v-if="normalizedText"><h4>Как разобрана команда</h4><p>{{ normalizedText }}</p></template><button class="link" :disabled="busy" @click="retryTranscript">Исправить текст</button></details></section>
+        <section v-if="audioUrl||lastTranscript" class="speech-result"><div class="result-heading"><h3>{{ audioUrl?'Твоя запись':'Исходный текст' }}</h3><span v-if="engineName" class="engine-badge">{{ engineName }}<template v-if="elapsed"> · {{ elapsed }} с</template></span></div><audio v-if="audioUrl" :src="audioUrl" controls preload="metadata" aria-label="Прослушать последнюю запись"></audio><details v-if="rawTranscript||lastTranscript"><summary>Расшифровка и исправления</summary><h4>Распознано из аудио</h4><p>{{ rawTranscript||lastTranscript }}</p><button class="link" :disabled="busy" @click="retryTranscript">Исправить текст</button></details></section>
         <section v-if="savedTasks.length" class="saved-results"><h3>Результат: {{ savedTasks.length }}</h3><article v-for="task in savedTasks" :key="task.id" class="saved-event"><span class="saved-check">✓</span><div><strong>{{ task.title }}<span v-if="task.recurrence" class="repeat-badge"> ↻ {{ task.recurrence.frequency==='weekly'?'Каждую неделю':'Каждый день' }}</span></strong><small>{{ displayTime(task.start) }} — {{ displayTime(task.end) }}</small><p v-if="task.description">{{ task.description }}</p></div></article><button class="outline-button" @click="closeVoice">Посмотреть в календаре</button></section>
-        <section v-if="command" class="preview command-review"><h3>Подтверждение команды</h3><p>{{ command.note }}</p><p>Можно сказать «первый вариант», «только это событие», «всю серию», «подтверждаю» или «отмена».</p><article v-for="(op,i) in command.operations" :key="i" class="draft"><h4>{{ op.instruction.operation==='create'?'Добавить':op.instruction.operation==='delete'?'Удалить':'Изменить' }}: {{ op.instruction.target || 'Выбранная задача' }}</h4><label v-for="(candidate,n) in op.candidates" :key="candidate.occurrence_id||candidate.id"><input type="radio" :name="'candidate-'+i" v-model="choices[i].candidate" :value="n">{{ n+1 }}. {{ candidate.title }} · {{ displayTime(candidate.start) }}</label><p v-if="op.instruction.new_recurrence">Повторение: {{ op.instruction.new_recurrence==='weekly'?'каждую неделю':'каждый день' }} · без окончания. Дата, время и описание сохраняются.</p><p v-if="op.instruction.new_title">Название: {{ op.instruction.new_title }}</p><p v-if="op.instruction.new_time || op.instruction.new_date_reference">Новое время: {{ op.instruction.new_date_reference }} {{ op.instruction.new_time }}</p><p v-if="op.instruction.description!==null">{{ op.instruction.append_description?'Добавить в описание':'Описание' }}: {{ op.instruction.description }}</p><fieldset v-if="op.instruction.operation!=='create' && choices[i].candidate!==null && (op.candidates[choices[i].candidate].recurrence || op.candidates[choices[i].candidate].series_parent_id)"><legend>Какие повторения?</legend><label><input type="radio" v-model="choices[i].scope" value="occurrence">Только это событие</label><label><input type="radio" v-model="choices[i].scope" value="series">Вся серия</label></fieldset></article><button class="primary-button" :disabled="busy || !readyCommand()" @click="executeCommand">Подтвердить</button><button class="outline-button" :disabled="busy" @click="command=null;text='';message='Команда отменена.'">Отмена</button></section>
+        <section v-if="command" class="preview command-review"><h3>Подтверждение команды</h3><p>{{ command.note }}</p><div v-if="bulkDelete" class="delete-list"><p>Удалить все перечисленные дела? Крестик исключает событие из удаления.</p><template v-for="(op,i) in command.operations" :key="i"><article v-if="!choices[i].skip" class="delete-chip"><div><strong>{{ op.candidates[0].title }}</strong><small>{{ displayTime(op.candidates[0].start) }}{{ op.candidates[0].recurrence?' · Только это повторение':'' }}</small></div><button type="button" :disabled="busy" :aria-label="'Исключить '+op.candidates[0].title" @click="excludeDeletion(i)">×</button></article></template></div><template v-else><p>Можно сказать «первый вариант», «только это событие», «всю серию», «подтверждаю» или «отмена».</p><article v-for="(op,i) in command.operations" :key="i" class="draft"><h4>{{ op.instruction.operation==='create'?'Добавить':op.instruction.operation==='delete'?'Удалить':'Изменить' }}: {{ op.instruction.target || 'Выбранная задача' }}</h4><label v-for="(candidate,n) in op.candidates" :key="candidate.occurrence_id||candidate.id"><input type="radio" :name="'candidate-'+i" v-model="choices[i].candidate" :value="n">{{ n+1 }}. {{ candidate.title }} · {{ displayTime(candidate.start) }}</label><p v-if="op.instruction.new_recurrence">Повторение: {{ op.instruction.new_recurrence==='weekly'?'каждую неделю':'каждый день' }} · без окончания. Дата, время и описание сохраняются.</p><p v-if="op.instruction.new_title">Название: {{ op.instruction.new_title }}</p><p v-if="op.instruction.new_time || op.instruction.new_date_reference">Новое время: {{ op.instruction.new_date_reference }} {{ op.instruction.new_time }}</p><p v-if="op.instruction.description!==null">{{ op.instruction.append_description?'Добавить в описание':'Описание' }}: {{ op.instruction.description }}</p><fieldset v-if="op.instruction.operation!=='create' && choices[i].candidate!==null && (op.candidates[choices[i].candidate].recurrence || op.candidates[choices[i].candidate].series_parent_id)"><legend>Какие повторения?</legend><label><input type="radio" v-model="choices[i].scope" value="occurrence">Только это событие</label><label><input type="radio" v-model="choices[i].scope" value="series">Вся серия</label></fieldset></article></template><button class="primary-button" :disabled="busy || !readyCommand()" @click="executeCommand">Подтвердить</button><button class="outline-button" :disabled="busy" @click="command=null;text='';message='Команда отменена.'">Отмена</button></section>
         <PlanEditor v-if="plan&&!busy" ref="planEditor" :key="plan.id" :plan="plan" @saved="savedFromPreview" @error="message=$event" />
       </div></AssistantDrawer>
   </div>
 </template>
 
 <style scoped>
+.delete-list { display:grid; gap:8px; margin:12px 0; }
+.delete-chip { display:flex; align-items:center; gap:12px; padding:12px 14px; border:1px solid #eaded5; border-radius:12px; background:#fff9f3; }
+.delete-chip>div { flex:1; min-width:0; }
+.delete-chip strong,.delete-chip small { display:block; overflow-wrap:anywhere; }
+.delete-chip small { color:var(--muted); margin-top:4px; }
+.delete-chip button { width:32px; height:32px; flex-shrink:0; border-radius:50%; font-size:24px; color:#a94a22; }
+.voice-window-body .voice-command-text {
+  height: 300px;
+  min-height: 240px;
+  line-height: 1.55;
+  resize: vertical;
+}
+@media (max-width: 760px) {
+  .voice-window-body .voice-command-text { height: 260px; min-height: 210px; }
+}
+
 .calendar-clear-review { margin: 12px 0 16px; padding: 12px; border: 1px solid #e9c9bd; border-radius: 8px; background: #fff6f1; }
 .calendar-clear-review p { margin: 5px 0 10px; color: var(--muted); font-size: 12px; }
 .calendar-clear-review > div { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }

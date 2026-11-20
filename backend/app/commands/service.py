@@ -131,7 +131,8 @@ class CommandService:
                 chosen=unique
             if not chosen or any(ref not in mapping for ref in chosen):raise HTTPException(502,'Выбрано неизвестное событие. Календарь не изменён.')
             if set(chosen)&set(decision.keep_refs):raise HTTPException(502,'Исключённое событие попало в действие.')
-            groups=[[ref] for ref in chosen] if action.selection=='all' else [chosen]
+            bulk_delete = action.action=='delete' and bool(re.search(r'\bвс[её]\s+(?:дела|события|задачи|мероприятия)\b', request.text, re.I))
+            groups=[[ref] for ref in chosen] if action.selection=='all' or bulk_delete else [chosen]
             for refs in groups:
                 candidates=[mapping[ref] for ref in refs]
                 for candidate in candidates:
@@ -153,7 +154,7 @@ class CommandService:
                     changes['scope'] = 'unspecified'
                 instruction=Operation(operation=action.action,target=candidates[0].title,**changes)
                 operations.append({'instruction':instruction.model_dump(),'timezone':request.timezone,'candidates':[task.model_dump(mode='json') for task in candidates],
-                    'requires_confirmation':recurring or action.selection=='all' or bool(decision.keep_refs)})
+                    'bulk_delete':bulk_delete, 'requires_confirmation':recurring or action.selection=='all' or bulk_delete or bool(decision.keep_refs)})
         if decision.new_events:
             from app.plans.dates import enforce_date_context
             additions=enforce_date_context(decision.new_events,request.text,request.timezone)
@@ -259,6 +260,9 @@ class CommandService:
             # Delete before insert/update so replacement can reuse the released interval.
             ordered=sorted(zip(command.operations,data.choices),key=lambda pair: {'delete':0,'update':1,'create':2}[pair[0]['instruction']['operation']])
             for operation,choice in ordered:
+                if choice.skip:
+                    if operation['instruction']['operation']!='delete': raise HTTPException(422,'Исключить можно только удаление.')
+                    continue
                 if choice.candidate>=len(operation['candidates']): raise HTTPException(422,'Неверный вариант.')
                 snapshot=TaskRead.model_validate(operation['candidates'][choice.candidate]);op=operation['instruction']
                 if op['operation']=='create':
