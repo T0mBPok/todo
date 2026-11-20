@@ -312,11 +312,11 @@ input:focus,select:focus,textarea:focus { border-color:#c9ab98; }
 }
 
 /* Soft panel movement and animated menu controls. */
-.app-content { position:relative; grid-template-columns:224px minmax(0,1fr); gap:18px; transition:none; overflow:hidden; }
+.app-content { position:relative; grid-template-columns:214px minmax(0,1fr); gap:18px; transition:none; overflow:hidden; }
 .app-content.sidebar-collapsed { grid-template-columns:0px minmax(0,1fr); gap:0; }
 
 .calendar-with-suggestions { grid-column:2; min-width:0; }
-.calendar-sidebar { position:relative; inset:auto; width:224px; z-index:12; min-width:0; padding:18px; border:1px solid var(--line); border-radius:12px; background:var(--paper); box-shadow:0 8px 30px #231e281c; }
+.calendar-sidebar { position:relative; inset:auto; width:214px; z-index:12; min-width:0; padding:4px 0; border:0; border-radius:0; background:transparent; box-shadow:none; }
 .sidebar-enter-active,.sidebar-leave-active { transition:opacity .16s,transform .2s cubic-bezier(.2,.8,.2,1); will-change:transform,opacity; }
 .sidebar-enter-from,.sidebar-leave-to { opacity:0; transform:translate3d(-28px,0,0); }
 .sidebar-scrim { display:none; }
@@ -335,7 +335,7 @@ input:focus,select:focus,textarea:focus { border-color:#c9ab98; }
   .sidebar-scrim { display:block; position:absolute; inset:0 0 0 248px; border-radius:12px; background:#231e2826; z-index:11; padding:0; }
   .sidebar-shade-enter-active,.sidebar-shade-leave-active { transition:opacity .2s; }
   .sidebar-shade-enter-from,.sidebar-shade-leave-to { opacity:0; }
-  .calendar-sidebar { position:absolute; top:0; left:8px; bottom:8px; width:240px; transition:none; }
+  .calendar-sidebar { position:absolute; top:0; left:8px; bottom:8px; width:240px; padding:18px; border:1px solid var(--line); border-radius:12px; background:var(--paper); box-shadow:0 10px 45px #231e282b; transition:none; }
 }
 @media(prefers-reduced-motion:reduce) {
   .app-content,.sidebar-enter-active,.sidebar-leave-active,.sidebar-shade-enter-active,.sidebar-shade-leave-active { transition:none; }
