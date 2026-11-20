@@ -197,7 +197,7 @@ function slotClick(event,day) {
 .calendar-timeline .timezone-label { z-index:11; }
 .calendar-timeline .day-heading { min-width:0; }
 .calendar-timeline .hour-labels { z-index:5; }
-.all-day-grid { position:sticky; top:82px; z-index:9; border-bottom:1px solid var(--line); background:var(--paper); }
+.all-day-grid { position:sticky; top:var(--calendar-days-height,52px); z-index:9; border-bottom:1px solid var(--line); background:var(--paper); }
 .all-day-label { display:grid; place-items:center; font-size:10px; }
 .all-day-column { min-width:0; padding:2px 4px; }
 .calendar-month-track { display:flex; height:100%; }
@@ -205,5 +205,4 @@ function slotClick(event,day) {
 .month-panel-title { flex-shrink:0; text-align:center; padding:10px; text-transform:capitalize; font-size:12px; color:var(--muted); }
 .calendar-month-panel .month-grid { overflow:visible; min-height:0; grid-template-rows:repeat(6,minmax(0,1fr)); }
 .calendar-month-panel .month-cell { overflow:auto; }
-@media(max-width:760px) { .all-day-grid { top:66px; } }
 </style>
