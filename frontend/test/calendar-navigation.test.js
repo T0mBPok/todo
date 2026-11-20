@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { createCalendarWindow, calendarScrollPosition, calendarWindowRange, shiftCalendarDate } from '../src/shared/calendarScroll.js'
-import { addDays, dateKey, fromKey, monthDays, moveDate, visibleRange, weekStart } from '../src/shared/calendar.js'
+import { eventsOnDay, addDays, dateKey, fromKey, monthDays, moveDate, visibleRange, weekStart } from '../src/shared/calendar.js'
 
 test('navigation preserves selected period lengths across month and year boundaries', () => {
   for (const [view, step] of [['day', 1], ['three', 3], ['week', 7]]) {
@@ -57,16 +57,16 @@ test('rebasing long scrolls keeps the same date at the same fractional pixel pos
 
 const component = await readFile(new URL('../src/entities/tasks/TaskCalendar.vue', import.meta.url), 'utf8')
 const script = component.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
-function setup() {
+function setup(options = {}) {
   const events=[]
   const deps={
-    defineProps:()=>({tasks:[],day:'2026-11-20',view:'week'}), defineEmits:()=> (name,value)=>events.push([name,value]),
+    defineProps:()=>({tasks:[],day:'2026-11-20',view:'week',...options}), defineEmits:()=> (name,value)=>events.push([name,value]),
     defineExpose:()=>{},ref:value=>({value}),computed:fn=>({get value(){return fn()}}),
     onMounted:()=>{},onUnmounted:()=>{},watch:()=>{},nextTick:async()=>{},
-    setInterval:()=>0,clearInterval:()=>{},dateKey,fromKey,addDays,weekStart,monthDays,
+    setInterval:()=>0,clearInterval:()=>{},eventsOnDay,dateKey,fromKey,addDays,weekStart,monthDays,
     createCalendarWindow,calendarScrollPosition,calendarWindowRange,shiftCalendarDate,
   }
-  const page=new Function(...Object.keys(deps),script+'\nreturn {horizontalWheel,grid,onScroll,windowState,getVisibleRange}')( ...Object.values(deps))
+  const page=new Function(...Object.keys(deps),script+'\nreturn {horizontalWheel,grid,onScroll,windowState,getVisibleRange,horizontalPosition,unitWidth,showAllDay}')( ...Object.values(deps))
   page.grid.value={scrollLeft:2208,scrollTop:480}
   return {page,events}
 }
@@ -94,4 +94,12 @@ test('AI context follows the actual visible days including a partially visible t
   const partial=page.getVisibleRange()
   assert.equal(partial.start,full.start)
   assert.equal((new Date(partial.end)-new Date(partial.start))/86400000,8)
+})
+
+test('all-day row ignores buffered events outside the visible days', () => {
+  const {page}=setup({tasks:[{id:'all-day',is_all_day:true,title:'Holiday',start:'2026-12-04',end:'2026-12-05'}]})
+  page.horizontalPosition.value=21*page.unitWidth.value
+  assert.equal(page.showAllDay.value,false)
+  page.horizontalPosition.value=35*page.unitWidth.value
+  assert.equal(page.showAllDay.value,true)
 })

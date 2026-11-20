@@ -7,7 +7,7 @@ import CalendarEventEditor from './CalendarEventEditor.vue'
 const props = defineProps({ tasks: {type:Array,default:()=>[]}, day: String, view: {type:String,default:'week'} })
 const emit = defineEmits(['range-change','refresh','error','update:day','view-day','select-task'])
 const eventEditor = ref(null), grid = ref(null), now = ref(new Date())
-const viewportWidth = ref(800), gutterWidth = ref(64)
+const viewportWidth = ref(800), gutterWidth = ref(64), horizontalPosition = ref(0)
 const windowState = ref(createCalendarWindow(props.day, props.view))
 const unitWidth = computed(() => props.view === 'month' ? viewportWidth.value :
   (viewportWidth.value - gutterWidth.value) / windowState.value.visible)
@@ -26,6 +26,12 @@ const months = computed(() => Array.from({length:windowState.value.length}, (_, 
 const timedTasks = computed(() => props.tasks.filter(task => !task.is_all_day))
 const allDayTasks = computed(() => props.tasks.filter(task => task.is_all_day))
 const allDayColumns = computed(() => days.value.map(day => eventsOnDay(allDayTasks.value, dateKey(day))))
+const showAllDay = computed(() => {
+  const offset = horizontalPosition.value / Math.max(1,unitWidth.value)
+  const first = Math.floor(offset + 0.00001)
+  const last = Math.ceil(offset + windowState.value.visible - 0.00001)
+  return allDayColumns.value.slice(first,last).some(column => column.length)
+})
 const today=computed(()=>dateKey(now.value))
 const timer=setInterval(()=>{now.value=new Date()},60000)
 onUnmounted(() => { clearInterval(timer); resizeObserver?.disconnect() })
@@ -76,6 +82,7 @@ async function onScroll() {
   if (resetting || !grid.value) return
   suppressClickUntil = Date.now() + 250
   const currentLeft = grid.value.scrollLeft
+  horizontalPosition.value = currentLeft
   if (lastScrollLeft !== null && Math.abs(currentLeft-lastScrollLeft) < 0.5) return
   lastScrollLeft = currentLeft
   const position = calendarScrollPosition(windowState.value, currentLeft, viewportWidth.value, gutterWidth.value)
@@ -93,6 +100,7 @@ async function onScroll() {
   if (!grid.value || version !== pendingReset) return
   grid.value.scrollLeft = left - position.shift * position.unit
   lastScrollLeft = grid.value.scrollLeft
+  horizontalPosition.value = grid.value.scrollLeft
   publishRange()
   resetting = false
 }
@@ -108,6 +116,7 @@ async function resetWindow(resetTime = false) {
   if (!grid.value || version !== pendingReset) return
   grid.value.scrollLeft = windowState.value.padding * unitWidth.value
   lastScrollLeft = grid.value.scrollLeft
+  horizontalPosition.value = grid.value.scrollLeft
   if (resetTime) grid.value.scrollTop = props.view === 'month' ? 0 : 7.5 * 64
   publishRange()
   resetting = false
@@ -116,14 +125,17 @@ onMounted(async () => {
   await resetWindow(true)
   resizeObserver = new ResizeObserver(() => {
     if (!grid.value || grid.value.clientWidth === viewportWidth.value) return
+    if (resetting) return
+    const version = pendingReset
     const oldUnit = unitWidth.value
     const offset = grid.value.scrollLeft / oldUnit
     viewportWidth.value = grid.value.clientWidth
     gutterWidth.value = window.innerWidth <= 760 ? 40 : 64
     nextTick(() => {
-      if (!grid.value) return
+      if (!grid.value || resetting || version !== pendingReset) return
       grid.value.scrollLeft = offset * unitWidth.value
       lastScrollLeft = grid.value.scrollLeft
+  horizontalPosition.value = grid.value.scrollLeft
     })
   })
   resizeObserver.observe(grid.value)
@@ -153,7 +165,7 @@ function slotClick(event,day) {
       @pointermove.passive="moveDrag" @pointerup="pointerStart=null" @pointercancel="pointerStart=null">
     <div v-if="view!=='month'" class="calendar-timeline" :style="timelineStyle">
       <div class="week-heading"><div class="timezone-label">{{ Intl.DateTimeFormat('ru',{timeZoneName:'shortOffset'}).formatToParts(now).find(p=>p.type==='timeZoneName')?.value }}</div><button v-for="d in days" :key="dateKey(d)" :class="['day-heading',{'is-today':dateKey(d)===today}]" @click="emit('update:day',dateKey(d))"><span>{{ weekday(d) }}</span><b>{{ d.getDate() }}</b></button></div>
-      <div v-if="allDayColumns.some(column => column.length)" class="all-day-grid">
+      <div v-if="showAllDay" class="all-day-grid">
         <span class="all-day-label">Весь день</span>
         <div v-for="(column, index) in allDayColumns" :key="dateKey(days[index])" class="all-day-column">
           <button v-for="task in column" :key="task.id" :class="['month-event',color(task)]" :title="task.title" @click="preview(task, $event)">

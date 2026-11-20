@@ -11,6 +11,7 @@ import { useVoiceInput } from './features/voice/useVoiceInput'
 import AssistantDrawer from './features/voice/AssistantDrawer.vue'
 import PlanEditor from './entities/plans/PlanEditor.vue'
 import TaskCalendar from './entities/tasks/TaskCalendar.vue'
+import CalendarViewPicker from './shared/CalendarViewPicker.vue'
 import BalanceSuggestions from './features/balance/BalanceSuggestions.vue'
 const commandHistory=ref([])
 const command=ref(null), choices=ref([]), contextTask=ref(null)
@@ -230,7 +231,7 @@ watch(()=>props.refreshToken,()=>refreshSafely())
       <h1 class="period-title" :aria-label="monthLabel"><span class="full-month" aria-hidden="true">{{ monthLabel }}</span><span class="short-month" aria-hidden="true">{{ shortMonthLabel }}</span></h1>
       <div class="toolbar-spacer"></div>
       <button ref="voiceTrigger" class="assistant-trigger" aria-label="Открыть меню ИИ" :aria-expanded="voiceOpen" @click="voiceOpen=true"><span aria-hidden="true">☰</span><span>Помощник</span><i></i></button>
-      <select v-model="view" class="view-select" aria-label="Вид календаря"><option value="day">День</option><option value="three">3 дня</option><option value="week">Неделя</option><option value="month">Месяц</option></select>
+      <CalendarViewPicker v-model="view" />
     </div>
     </Teleport>
     <div :class="['app-content',{'sidebar-collapsed':!sidebarOpen}]">
