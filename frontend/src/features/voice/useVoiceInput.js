@@ -29,7 +29,7 @@ export function useVoiceInput({ text, onComplete, onError }) {
       const result = await readApiResponse(response, 'Ошибка распознавания аудио.')
       if (disposed || cancelled) return
       if (typeof result?.text !== 'string') throw new Error('Распознавание не вернуло текст. Повторите запись.')
-      rawTranscript.value = result.text
+      rawTranscript.value = result.raw_text || result.text
       engineName.value = result.engine || 'Локальный движок'
       elapsed.value = result.seconds || 0
       // Each recording is a complete command or answer, never an implicit append.
@@ -45,7 +45,7 @@ export function useVoiceInput({ text, onComplete, onError }) {
     if (starting.value || processing.value || !supported) return
     starting.value = true; cancelled = false; chunks = []
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false })
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, sampleRate: { ideal: 16000 } }, video: false })
       if (disposed || cancelled) { release(); return }
       const mimeType = ['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus'].find(type => MediaRecorder.isTypeSupported(type))
       recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)

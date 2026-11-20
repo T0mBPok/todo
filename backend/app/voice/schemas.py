@@ -5,3 +5,6 @@ class Transcript(BaseModel):
     engine: str = ''
     seconds: float = 0
     warning: str = ''
+    raw_text: str = ''
+    postprocessed: bool = False
+    cleanup_seconds: float = 0

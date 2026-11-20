@@ -144,14 +144,14 @@ def test_voice_invalid_audio(client):
 
 def test_gigaam_response_metadata(monkeypatch):
     import httpx
-    from app.voice.service import transcribe_audio
+    from app.voice.service import _transcribe_audio as transcribe_audio
     monkeypatch.setattr(httpx,'post', lambda *args,**kwargs: httpx.Response(200, request=httpx.Request('POST','http://speech/transcribe'),json={'text':'Встреча','engine':'GigaAM v3','seconds':0.5,'warning':''}))
     assert transcribe_audio(b'audio')['engine']=='GigaAM v3'
 
 def test_gigaam_failure_uses_local_fallback(monkeypatch):
     monkeypatch.setenv('SPEECH_LOCAL_FALLBACK', '1')
     import httpx
-    from app.voice.service import transcribe_audio
+    from app.voice.service import _transcribe_audio as transcribe_audio
     def offline(*args,**kwargs):
         raise httpx.ConnectError('offline')
     monkeypatch.setattr(httpx,'post',offline)

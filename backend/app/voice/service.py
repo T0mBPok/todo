@@ -3,6 +3,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Lock
 import os
+import re
+from collections import Counter
 from app.core.request_logging import log_dependency
 import av
 import httpx
@@ -41,7 +43,7 @@ def whisper_transcribe(audio: bytes):
     return {'text': text, 'engine':'Whisper Small', 'warning':'Запасной движок: GigaAM недоступна.'}
 
 
-def transcribe_audio(audio: bytes):
+def _transcribe_audio(audio: bytes):
     started = perf_counter()
     speech_url = os.getenv('SPEECH_URL', 'http://speech:8001').rstrip('/')
     use_fallback = os.getenv('SPEECH_LOCAL_FALLBACK', '1') == '1'
@@ -73,3 +75,28 @@ def transcribe_audio(audio: bytes):
         result=whisper_transcribe(audio)
         result['seconds']=round(perf_counter()-started,2)
         return result
+
+def polish_transcript(result):
+    from app.plans.ai import AIPlanner
+    raw=result['text']
+    started=perf_counter()
+    result={**result,'raw_text':raw,'postprocessed':False}
+    try:
+        text,_=AIPlanner().normalize(raw)
+        spoken_numbers = lambda value: Counter(match[1].casefold() for match in re.finditer(
+            r'\b(девятнадцат|восемнадцат|семнадцат|шестнадцат|пятнадцат|четырнадцат|тринадцат|двенадцат|одиннадцат|двадцат|тридцат|девяност|восем|девят|десят|сорок|сем|шест|пят|четыр|три|дв|один|одн|полтор|полчас|утр|вечер|ноч)\w*',value,re.I))
+        if spoken_numbers(raw) != spoken_numbers(text):
+            text=raw
+        result['text']=text
+        result['postprocessed']=True
+        log_dependency('ai','speech_cleanup',started,200)
+    except Exception as error:
+        # The recording stays usable when the language model is offline.
+        log_dependency('ai','speech_cleanup',started,outcome=type(error).__name__)
+        previous=result.get('warning','')
+        result['warning']=(previous+' Не удалось улучшить расшифровку. Показан исходный текст.').strip()
+    result['cleanup_seconds']=round(perf_counter()-started,2)
+    return result
+
+def transcribe_audio(audio: bytes):
+    return polish_transcript(_transcribe_audio(audio))
