@@ -1,7 +1,7 @@
 <script setup>
 import { errorMessage } from './shared/errors.js'
 const props=defineProps({refreshToken:{type:Number,default:0}})
-import { onMounted, ref, computed, watch } from 'vue'
+import { onMounted, nextTick, ref, computed, watch } from 'vue'
 import { confirmPlan } from './entities/plans/api'
 import { listTasks } from './entities/tasks/api'
 import { request, localDate } from './shared/api'
@@ -27,6 +27,22 @@ const autoSave = ref(true), modelName = ref('qwen3.5:4b'), aiProvider=ref(null)
 const voiceOpen=ref(false), view=ref(window.innerWidth < 760 ? 'day' : 'week'), calendar=ref(null), sidebarOpen=ref(false)
 const assistantTab = ref('voice')
 const quickMode=ref(false)
+const calendarSurface=ref(null)
+let calendarMotion, sidebarMotionVersion=0
+watch(sidebarOpen, async () => {
+  const version=++sidebarMotionVersion
+  if (!calendarSurface.value || window.innerWidth<=760) return
+  calendarMotion?.cancel()
+  const before=calendarSurface.value.getBoundingClientRect().left
+  await nextTick()
+  if (!calendarSurface.value || version!==sidebarMotionVersion) return
+  const offset=before-calendarSurface.value.getBoundingClientRect().left
+  if (!offset || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  calendarMotion=calendarSurface.value.animate([
+    {transform:'translate3d('+offset+'px,0,0)'},{transform:'translate3d(0,0,0)'}
+  ],{duration:220,easing:'cubic-bezier(.2,.8,.2,1)'})
+})
+
 const voiceTrigger=ref(null)
 const day = ref(localDate(new Date()).slice(0,10))
 const monthLabel=computed(()=>fromKey(day.value).toLocaleDateString('ru-RU',{month:'long',year:'numeric'}))
@@ -243,7 +259,7 @@ watch(()=>props.refreshToken,()=>refreshSafely())
 
       </aside></Transition>
       <Transition name="sidebar-shade"><button v-if="sidebarOpen" class="sidebar-scrim" aria-label="Закрыть боковую панель" @click="sidebarOpen=false"></button></Transition>
-      <div class="calendar-with-suggestions"><TaskCalendar ref="calendar" :tasks="tasks" v-model:day="day" :view="view" @range-change="updateTaskRange" @select-task="contextTask=$event" @view-day="view='day'" @refresh="refreshSafely" @error="message=$event;voiceOpen=true" /></div>
+      <div ref="calendarSurface" class="calendar-with-suggestions"><TaskCalendar ref="calendar" :tasks="tasks" v-model:day="day" :view="view" @range-change="updateTaskRange" @select-task="contextTask=$event" @view-day="view='day'" @refresh="refreshSafely" @error="message=$event;voiceOpen=true" /></div>
     </div>
     <div v-if="message && !voiceOpen && !listening && !processing && !starting && !busy" class="calendar-toast" role="status"><span>{{ message }}</span><button aria-label="Закрыть сообщение" @click="message=''">×</button></div>
     <div v-if="!voiceOpen && (listening||starting||processing||busy)" class="quick-voice-bar" role="status" aria-live="polite"><span :class="['quick-status-dot',{'recording':listening}]"></span><div><strong>{{ listening?'Идёт запись · '+recordSeconds+' с':starting?'Подключаю микрофон…':processing?'Распознаю речь…':'Обрабатываю команду…' }}</strong><small>{{ listening?'Календарь перед глазами. Нажми «Стоп», когда закончишь.':'Можно продолжать смотреть календарь' }}</small></div><button v-if="listening" class="quick-finish" @click="quickMic">Стоп</button><button v-if="listening||starting" class="icon-button" aria-label="Отменить быструю запись" @click="cancelQuick">×</button><button class="quick-details" @click="voiceOpen=true">Панель</button></div>
