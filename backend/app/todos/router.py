@@ -1,7 +1,7 @@
 from uuid import UUID
 from fastapi import APIRouter,Depends,Response
 from app.core.database import get_session
-from app.todos.schemas import TodoInput,TodoRead,VoiceRequest
+from app.todos.schemas import TodoInput,TodoRead,VoiceRequest,Completion
 from app.todos.service import TodoService
 router=APIRouter(prefix='/todos',tags=['todos'])
 @router.post('/classify')
@@ -21,3 +21,7 @@ def delete(id:UUID,session=Depends(get_session)):TodoService(session).delete(id)
 def prepare(data:VoiceRequest,session=Depends(get_session)):return TodoService(session).prepare(data)
 @router.post('/commands/{id}/execute')
 def execute(id:UUID,session=Depends(get_session)):return TodoService(session).execute(id)
+
+@router.patch('/{id}/completion',response_model=TodoRead)
+def completion(id:UUID,data:Completion,session=Depends(get_session)):
+    return TodoService(session).complete(id,data.completed)

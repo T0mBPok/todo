@@ -21,7 +21,7 @@ def log_dependency(service, operation, started, status=None, outcome='ok'):
     )
 
 
-PATH_FIELDS = frozenset("intent operations new_events keep_refs note create_text action refs selection scope new_title description append_description new_time new_date_reference duration_minutes new_recurrence new_category title start end recurrence frequency timezone tasks needs_clarification review task_index reason text message content summary assessments moves event_ref slot_ref flexibility category is_fixed".split())
+PATH_FIELDS = frozenset("intent actions scheduled_date scheduled_at schedule_text clear_schedule new_events operations keep_refs note create_text action refs selection scope new_title description append_description new_time new_date_reference duration_minutes new_recurrence new_category title start end recurrence frequency timezone tasks needs_clarification review task_index reason text message content summary assessments moves event_ref slot_ref flexibility category is_fixed".split())
 
 
 def safe_path(location):

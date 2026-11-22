@@ -39,6 +39,8 @@ def test_sessions_and_cross_account_access(monkeypatch):
             assert todo.status_code == 201, todo.text
             assert bob.get('/api/todos').json() == []
             assert bob.delete('/api/todos/' + todo.json()['id']).status_code == 404
+            assert bob.patch('/api/todos/' + todo.json()['id'] + '/completion',json={'completed':True}).status_code == 404
+            assert alice.get('/api/todos').json()[0]['completed'] is False
             assert bob.delete('/api/tasks/' + event.json()['id']).status_code == 404
             assert all(item['id'] != event.json()['id'] for item in bob.get('/api/tasks').json())
             old_cookie = dict(alice.cookies.items())

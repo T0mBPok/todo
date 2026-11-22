@@ -25,7 +25,7 @@ def test_voice_multiple_tasks_idempotent_and_separate_from_calendar(client,monke
 def test_voice_targets_existing_todo_and_delete_requires_confirmation(client,monkeypatch):
     api,_=client
     task=api.post('/api/todos',json={'title':'Отчёт'}).json()
-    def interpret(text,context,history=None):
+    def interpret(text,context,history=None,timezone=None):
         assert context[0]['title']=='Отчёт'
         return Decision(note='Завершить отчёт',actions=[Action(action='complete',ref=context[0]['ref'])])
     monkeypatch.setattr(service,'interpret',interpret)

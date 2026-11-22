@@ -9,6 +9,8 @@ import { dateKey, fromKey, addDays, monthDays, moveDate, visibleRange } from './
 import MicIcon from './features/voice/MicIcon.vue'
 import { useVoiceInput } from './features/voice/useVoiceInput'
 import AssistantDrawer from './features/voice/AssistantDrawer.vue'
+import TodoVoicePanel from './entities/todos/TodoVoicePanel.vue'
+import {todoCalendarItems} from './entities/todos/calendar.js'
 import PlanEditor from './entities/plans/PlanEditor.vue'
 import TaskCalendar from './entities/tasks/TaskCalendar.vue'
 import CalendarViewPicker from './shared/CalendarViewPicker.vue'
@@ -87,10 +89,18 @@ async function recordWithCalendar() {
   await quickMic()
   if (listening.value) voiceOpen.value = false
 }
+const todos=ref([])
+const calendarItems=computed(()=>[...tasks.value,...todoCalendarItems(todos.value)])
+async function todosChanged(changed=[]) {
+  const scheduled=changed.find(todo=>todo.scheduled_date)
+  if(scheduled)day.value=scheduled.scheduled_at?localDate(scheduled.scheduled_at).slice(0,10):scheduled.scheduled_date
+  await nextTick()
+  await refreshSafely()
+}
 const taskRange = ref(null)
 function updateTaskRange(range) { taskRange.value = range }
 let refreshVersion=0
-async function refresh() { const version=++refreshVersion; const result=await listTasks(taskRange.value || visibleRange(day.value,view.value)); if(version===refreshVersion) tasks.value=result }
+async function refresh() { const version=++refreshVersion; const [result, todoResult]=await Promise.all([listTasks(taskRange.value || visibleRange(day.value,view.value)),request('/todos')]); if(version===refreshVersion) {tasks.value=result;todos.value=todoResult} }
 watch(taskRange,()=>refreshSafely())
 async function refreshSafely() { try { await refresh() } catch (error) { message.value = errorMessage(error) } }
 function readyCommand() {
@@ -271,15 +281,18 @@ watch(()=>props.refreshToken,()=>refreshSafely())
 
       </aside></Transition>
       <Transition name="sidebar-shade"><button v-if="sidebarOpen" class="sidebar-scrim" aria-label="Закрыть боковую панель" @click="sidebarOpen=false"></button></Transition>
-      <div ref="calendarSurface" class="calendar-with-suggestions"><TaskCalendar ref="calendar" :tasks="tasks" v-model:day="day" :view="view" @range-change="updateTaskRange" @select-task="contextTask=$event" @view-day="view='day'" @refresh="refreshSafely" @error="message=$event;voiceOpen=true" /></div>
+      <div ref="calendarSurface" class="calendar-with-suggestions"><TaskCalendar ref="calendar" :tasks="calendarItems" v-model:day="day" :view="view" @range-change="updateTaskRange" @select-task="contextTask=$event.entity==='todo'?null:$event" @view-day="view='day'" @refresh="refreshSafely" @error="message=$event;voiceOpen=true" /></div>
     </div>
     <div v-if="message && !voiceOpen && !listening && !processing && !starting && !busy" class="calendar-toast" role="status"><span>{{ message }}</span><button aria-label="Закрыть сообщение" @click="message=''">×</button></div>
     <div v-if="!voiceOpen && (listening||starting||processing||busy)" class="quick-voice-bar" role="status" aria-live="polite"><span :class="['quick-status-dot',{'recording':listening}]"></span><div><strong>{{ listening?'Идёт запись · '+recordSeconds+' с':starting?'Подключаю микрофон…':processing?'Распознаю речь…':'Обрабатываю команду…' }}</strong><small>{{ listening?'Календарь перед глазами. Нажми «Стоп», когда закончишь.':'Можно продолжать смотреть календарь' }}</small></div><button v-if="listening" class="quick-finish" @click="quickMic">Стоп</button><button v-if="listening||starting" class="icon-button" aria-label="Отменить быструю запись" @click="cancelQuick">×</button><button class="quick-details" @click="voiceOpen=true">Панель</button></div>
     <AssistantDrawer :open="voiceOpen" title="Помощник" @close="closeVoice">
       <nav class="assistant-tabs" aria-label="Действия с ИИ">
-        <button :class="{active:assistantTab==='voice'}" @click="assistantTab='voice'">Голос и команды</button>
+        <button :class="{active:assistantTab==='voice'}" @click="assistantTab='voice'">События</button>
+        <button :class="{active:assistantTab==='todos'}" @click="assistantTab='todos'">Задачи</button>
         <button :class="{active:assistantTab==='balance'}" @click="assistantTab='balance'">Разгрузить день</button>
       </nav>
+      <button v-if="assistantTab==='todos'" class="outline-button" @click="calendar?.addTodo()">Добавить задачу вручную</button>
+      <TodoVoicePanel v-if="assistantTab==='todos'" @changed="todosChanged"/>
       <BalanceSuggestions v-if="voiceOpen && assistantTab==='balance'" :tasks="tasks" @applied="message=$event;refreshSafely()" />
       <div v-show="assistantTab==='voice'" class="voice-window-body">
         <div class="assistant-quick-actions">
