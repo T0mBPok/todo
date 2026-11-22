@@ -109,7 +109,10 @@ class AIPlanner:
             if not duration_mentioned:
                 for task in parsed.tasks:
                     task.end = task.start + timedelta(hours=1)
-            unresolved = enforce_spoken_time(parsed.tasks, normalize_transcript(spoken), request.timezone, normalized)
+            # Collapse model-expanded repetitions before matching one spoken slot
+            # to one series. Otherwise duplicate titles bypass time correction.
+            parsed.tasks = apply_spoken_recurrence(parsed.tasks, request.text, request.timezone)
+            unresolved = enforce_spoken_time(parsed.tasks, normalize_transcript(spoken), request.timezone, normalized, request.text)
             for index in unresolved:
                 model_reasons.setdefault(parsed.tasks[index].title, 'Не удалось сверить время события с диктовкой.')
             # Linked events share a boundary after their spoken times have been applied.
@@ -123,7 +126,6 @@ class AIPlanner:
                         first, second = sorted(tasks, key=lambda task: task.start)
                         if second.start > first.start:
                             first.end = second.start
-            parsed.tasks = apply_spoken_recurrence(parsed.tasks, request.text, request.timezone)
             zone = ZoneInfo(request.timezone)
             summary = '; '.join(f'{task.title}: {task.start.astimezone(zone):%d.%m %H:%M}–{task.end.astimezone(zone):%H:%M}' for task in parsed.tasks)
             note = 'Понял: ' + summary + '.'

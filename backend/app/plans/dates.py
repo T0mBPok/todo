@@ -108,6 +108,10 @@ def enforce_spoken_time(tasks, text, timezone_name, *alternatives):
             fully_timed = slots
         if len(tasks) == 1 and len(slots) == 1:
             matches = {0: slots[0]}
+        elif (len(slots) == 1 and tasks and all(task.recurrence for task in tasks)
+              and len({task.title.casefold() for task in tasks}) == 1):
+            # One shared interval may apply to several explicitly named weekdays.
+            matches = {index: slots[0] for index in range(len(tasks))}
         else:
             matches = {}
             for clause, first, last in slots:
@@ -124,7 +128,7 @@ def enforce_spoken_time(tasks, text, timezone_name, *alternatives):
             if index in resolved:
                 continue
             task = tasks[index]
-            if len(tasks) > 1 and len(ANCHOR.findall(clause)) == 1:
+            if len(tasks) > 1 and not task.recurrence and len(ANCHOR.findall(clause)) == 1:
                 enforce_date_context([task], clause, timezone_name, now)
             day = task.start.astimezone(zone).date()
             start = datetime.fromisoformat(f'{day}T{first}').replace(tzinfo=zone)

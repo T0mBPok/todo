@@ -147,3 +147,55 @@ def test_explicit_evening_range_survives_model_utc_error_through_save(client, mo
     event=api.get('/api/tasks').json()[0]
     assert datetime.fromisoformat(event['start']).astimezone(zone).isoformat() == f'{day}T20:00:00{datetime.now(zone).strftime("%z")[:3]}:00'
     assert datetime.fromisoformat(event['end']).astimezone(zone).strftime('%H:%M')=='21:00'
+
+
+@pytest.mark.parametrize('zone_name', ['Asia/Tomsk','Asia/Novosibirsk','Europe/Moscow','Europe/Lisbon'])
+@pytest.mark.parametrize('copies', [1,2,4])
+def test_friday_series_keeps_eight_am_when_model_expands_utc_repetitions(client,monkeypatch,zone_name,copies):
+    api,_=client
+    zone=ZoneInfo(zone_name)
+    today=datetime.now(zone).date()
+    friday=today+timedelta(days=(4-today.weekday())%7 or 7)
+    text='А-а каждую пятницу с 08:00 до 09:00 у меня тренировка в зале.'
+    monkeypatch.setattr(ai.config,'AI_PROVIDER','gigachat')
+    monkeypatch.setattr(grounded_ai,'interpret_calendar',lambda *args:grounded_ai.Decision(intent='create',note='',create_text=text))
+    wrong=ai.ExtractedPlan(tasks=[{'title':'Тренировка в зале',
+        'start':f'{friday+timedelta(days=i*7)}T08:00:00Z',
+        'end':f'{friday+timedelta(days=i*7)}T09:00:00Z'} for i in range(copies)],note='',needs_clarification=False)
+    def model(url,**kwargs):
+        payload=kwargs['json']
+        content=json.dumps({'text':text,'note':''}) if 'text' in payload['format'].get('properties',{}) else wrong.model_dump_json()
+        return httpx.Response(200,request=httpx.Request('POST',url),json={'message':{'content':content}})
+    monkeypatch.setattr(ai,'ai_post',model)
+    response=api.post('/api/commands',json={'text':text,'timezone':zone_name})
+    assert response.status_code==200,response.text
+    draft=response.json()['plan']
+    assert len(draft['tasks'])==1
+    assert draft['review']==[]
+    event=draft['tasks'][0]
+    assert datetime.fromisoformat(event['start']).astimezone(zone).strftime('%H:%M')=='08:00'
+    assert datetime.fromisoformat(event['end']).astimezone(zone).strftime('%H:%M')=='09:00'
+    assert datetime.fromisoformat(event['start']).astimezone(zone).weekday()==4
+    assert event['recurrence']['timezone']==zone_name
+    saved=api.post(f"/api/plans/{draft['id']}/confirm",json={'tasks':draft['tasks']})
+    assert saved.status_code==200,saved.text
+    start=datetime.combine(friday,datetime.min.time(),zone)
+    events=api.get('/api/tasks',params={'start':start.isoformat(),'end':(start+timedelta(days=21)).isoformat()}).json()
+    assert len(events)==3
+    for event in events:
+        local=datetime.fromisoformat(event['start']).astimezone(zone)
+        assert local.weekday()==4 and local.strftime('%H:%M')=='08:00'
+
+
+def test_same_time_applies_to_every_explicit_weekday_after_recurrence_expansion(monkeypatch):
+    from app.plans.schemas import PlanRequest
+    zone=ZoneInfo('Asia/Tomsk')
+    text='Каждую пятницу и воскресенье с 08:00 до 09:00 тренировка в зале.'
+    monkeypatch.setattr(ai.AIPlanner,'normalize',lambda *args:(text,''))
+    wrong=ai.ExtractedPlan(tasks=[{'title':'Тренировка в зале','start':'2026-11-27T08:00:00Z','end':'2026-11-27T09:00:00Z'}],note='',needs_clarification=False)
+    monkeypatch.setattr(ai,'ai_post',lambda url,**kwargs:httpx.Response(200,request=httpx.Request('POST',url),json={'message':{'content':wrong.model_dump_json()}}))
+    result=ai.AIPlanner().generate(PlanRequest(text=text,timezone=zone.key),[])
+    assert len(result.tasks)==2
+    assert {t.start.astimezone(zone).weekday() for t in result.tasks}=={4,6}
+    assert all(t.start.astimezone(zone).strftime('%H:%M')=='08:00' for t in result.tasks)
+    assert all(t.end.astimezone(zone).strftime('%H:%M')=='09:00' for t in result.tasks)
