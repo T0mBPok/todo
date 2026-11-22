@@ -111,5 +111,5 @@ scope=occurrence для названной даты или «одно событ
     except httpx.TimeoutException as e:raise HTTPException(504,'Локальная модель не успела разобрать контекст. Попробуйте ещё раз.') from e
     except httpx.RequestError as e:raise HTTPException(503,'Нет связи с локальной моделью.') from e
     except (httpx.HTTPStatusError,ValueError,KeyError,TypeError) as e:
-        log_result_rejection('calendar_command', 'invalid_schema')
+        log_result_rejection('calendar_command', 'invalid_schema', e)
         raise HTTPException(502,'Модель вернула некорректную команду. Календарь не изменён.') from e

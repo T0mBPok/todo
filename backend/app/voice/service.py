@@ -5,7 +5,7 @@ from threading import Lock
 import os
 import re
 from collections import Counter
-from app.core.request_logging import log_dependency
+from app.core.request_logging import log_dependency, log_result_rejection
 import av
 import httpx
 from time import perf_counter
@@ -93,6 +93,7 @@ def polish_transcript(result):
     except Exception as error:
         # The recording stays usable when the language model is offline.
         log_dependency('ai','speech_cleanup',started,outcome=type(error).__name__)
+        log_result_rejection('speech_cleanup', 'cleanup_failed', error)
         previous=result.get('warning','')
         result['warning']=(previous+' Не удалось улучшить расшифровку. Показан исходный текст.').strip()
     result['cleanup_seconds']=round(perf_counter()-started,2)

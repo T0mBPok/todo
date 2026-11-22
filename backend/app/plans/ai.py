@@ -36,10 +36,14 @@ class AIPlanner:
         response.raise_for_status()
         data = response.json()
         if data.get('done_reason') == 'length':
+            log_result_rejection('transcript_normalization', 'response_truncated')
             return original, ''
         parsed = json.loads(data['message']['content'])
+        if not isinstance(parsed, dict):
+            raise TypeError('Expected transcript object')
         normalized = parsed.get('text')
         if not isinstance(normalized, str) or not normalized.strip() or len(normalized) > 6000:
+            log_result_rejection('transcript_normalization', 'invalid_text_field')
             return original, ''
         normalized = normalize_transcript(normalized.strip())
         # A language correction must never silently change explicit numeric times.
@@ -48,6 +52,7 @@ class AIPlanner:
         anchors = lambda value: Counter(match.group().casefold() for match in ANCHOR.finditer(value))
         if (times(original) - times(normalized) or numbers(original) != numbers(normalized)
                 or anchors(original) != anchors(normalized)):
+            log_result_rejection('transcript_normalization', 'temporal_anchors_changed')
             return original, ''
         details=re.search(r'(?:в\s+описании|описание(?:\s+задачи)?|детали)\s*[:—-]\s*(.+)',original,re.I|re.S)
         if details and details.group(1).strip().lower() not in normalized.lower():
@@ -147,7 +152,7 @@ class AIPlanner:
         except httpx.RequestError as error:
             raise HTTPException(503, 'Нет связи с Ollama. Запустите Ollama в WSL.') from error
         except (ValueError, KeyError, TypeError) as error:
-            log_result_rejection('calendar_plan', 'invalid_schema')
+            log_result_rejection('calendar_plan', 'invalid_schema', error)
             raise HTTPException(502, 'Модель вернула некорректный план. Уточните запрос.') from error
 
 def model_status():

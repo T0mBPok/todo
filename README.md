@@ -212,3 +212,14 @@ API списка: /api/todos; разбор голоса: /api/todos/commands/pre
 В серверном .env задайте AI_PROVIDER=gigachat, GIGACHAT_MODEL=GigaChat-2 и GIGACHAT_AUTH_KEY с ключом авторизации проекта для физлиц (GIGACHAT_API_PERS). Ключ используется для получения временного токена автоматически. Запустите docker compose up -d --build --wait backend frontend и проверьте ответ командой docker compose exec -T backend python -m app.core.check_ai.
 
 Бэкенду нужен исходящий HTTPS на api.giga.chat:443 и ngw.devices.sberbank.ru:9443. Сертификат для этих запросов входит в образ backend. Для локальной Qwen используйте AI_PROVIDER=ollama.
+
+
+### Диагностика ошибок ИИ
+
+`sudo docker compose logs --since=15m backend` показывает связанные по `request_id` этапы запроса.
+Строка `ai_result` содержит `operation`, `outcome` и JSON `diagnostics`: класс исключения, этап,
+пути ошибочных полей (например, `operations[0].action`) и коды Pydantic; для literal-ошибок —
+допустимые значения. Для JSON указываются строка, колонка и позиция; для HTTP — статус.
+Список ограничен 12 ошибками, полное количество записывается отдельно.
+Сырые ответы модели, ввод пользователя, токены, query string и тексты исключений не логируются.
+Неизвестные имена полей скрываются. Коды запросов остаются в серверных логах, а не в интерфейсе.

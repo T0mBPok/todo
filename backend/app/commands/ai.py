@@ -1,3 +1,4 @@
+from app.core.request_logging import log_result_rejection
 from app.core.ai_client import ai_post
 import httpx
 import re
@@ -55,4 +56,6 @@ nearest=true если ближайшая. target='' для этой/неё, ес
                 op.time_reference=None
         return parsed
     except httpx.RequestError as e: raise HTTPException(503,'Нет связи с локальной моделью. Повторите команду.') from e
-    except (httpx.HTTPStatusError,ValueError,KeyError) as e: raise HTTPException(502,'Не удалось разобрать команду. Уточните название и изменение.') from e
+    except (httpx.HTTPStatusError,ValueError,KeyError) as e:
+        log_result_rejection('legacy_calendar_command', 'invalid_schema', e)
+        raise HTTPException(502,'Не удалось разобрать команду. Уточните название и изменение.') from e

@@ -1,3 +1,4 @@
+from app.core.request_logging import log_result_rejection
 from app.core.ai_client import ai_post
 import json
 import httpx
@@ -41,4 +42,6 @@ def interpret(text,context,history=None):
                 action.category=classify_category(action.title or '',action.description or '',text)
         return result
     except httpx.RequestError as e:raise HTTPException(503,'Нет связи с локальной моделью.') from e
-    except (httpx.HTTPStatusError,ValueError,KeyError) as e:raise HTTPException(502,'Не удалось разобрать задачи. Попробуйте уточнить формулировку.') from e
+    except (httpx.HTTPStatusError,ValueError,KeyError) as e:
+        log_result_rejection('todo_command', 'invalid_schema', e)
+        raise HTTPException(502,'Не удалось разобрать задачи. Попробуйте уточнить формулировку.') from e

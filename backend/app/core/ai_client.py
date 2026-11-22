@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 import httpx
 from fastapi import HTTPException
 from app.core import config, gigachat
-from app.core.request_logging import log_dependency
+from app.core.request_logging import log_dependency, log_result_rejection
 
 def ai_post(url, *, timeout, json, operation='completion'):
     started = perf_counter()
@@ -131,7 +131,8 @@ def ai_post(url, *, timeout, json, operation='completion'):
     except httpx.RequestError as error:
         log_dependency(config.AI_PROVIDER, operation, started, status, type(error).__name__)
         raise HTTPException(503,f'Нет связи с {provider}. Проверьте доступ сервера в интернет.') from None
-    except (ValueError,KeyError,IndexError,TypeError,AttributeError):
+    except (ValueError,KeyError,IndexError,TypeError,AttributeError) as error:
+        log_result_rejection(operation, 'invalid_provider_response', error)
         log_dependency(config.AI_PROVIDER, operation, started, status,
                        'invalid_response' if status is None else stage)
         raise HTTPException(502,f'{provider} вернул некорректный ответ. Календарь не изменён.') from None

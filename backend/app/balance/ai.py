@@ -45,5 +45,5 @@ def analyze(context):
     except httpx.TimeoutException as e:raise HTTPException(504,'Локальная модель не успела проанализировать нагрузку. Повторите запрос.') from e
     except httpx.RequestError as e:raise HTTPException(503,'Нет связи с локальной моделью.') from e
     except (httpx.HTTPStatusError,ValueError,KeyError,TypeError) as e:
-        log_result_rejection('schedule_analysis', 'invalid_schema')
+        log_result_rejection('schedule_analysis', 'invalid_schema', e)
         raise HTTPException(502,'Модель вернула некорректное предложение. Календарь не изменён.') from e
