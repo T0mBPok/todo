@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
-from app.plans.dates import ANCHOR, CLOCK, DETAIL_MARKER, MONTHS, SENTENCE_BREAK
+from app.plans.dates import ANCHOR, CLOCK, DETAIL_MARKER, MONTHS, SENTENCE_BREAK, normalize_clock_minutes
 
 HOURS = {
     'часа': 1, 'одного': 1, 'двух': 2, 'трёх': 3, 'трех': 3, 'четырёх': 4,
@@ -87,6 +87,7 @@ def report_review(reviews, clause, reason, choices):
 
 
 def resolve_colloquial_ranges(text, timezone_name, *, now=None, reviews=None):
+    text = normalize_clock_minutes(text)
     zone = ZoneInfo(timezone_name)
     current = (now or datetime.now(zone)).astimezone(zone)
     minute_now = current.hour * 60 + current.minute

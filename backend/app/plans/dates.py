@@ -40,6 +40,13 @@ COMPACT_RANGE_END = re.compile(rf'({CLOCK}\s+до\s+)([01]\d|2[0-3])([0-5]\d)\b(
 
 
 def normalize_clock_minutes(text):
+    # ASR may spell a clock as two number groups. Require a time
+    # preposition or a day part so ordinary quantities remain untouched.
+    text = re.sub(r'\b((?:с|до|в|во|на|к)\s+)([01]?\d|2[0-3])\s+([0-5]\d)(?![\d:]|\s*(?:руб|минут|секунд))\b',
+                  r'\1\2:\3', text, flags=re.I)
+    text = re.sub(r'\b([01]?\d|2[0-3])\s+([0-5]\d)(?=\s+(?:утра|дня|вечера|ночи)\b)',
+                  r'\1:\2', text, flags=re.I)
+    text = re.sub(r'(' + CLOCK + r')\s+ут\b\.?', r'\1 утра', text, flags=re.I)
     text = SHORT_CLOCK.sub(lambda match: f'{int(match[1]):02d}:{int(match[2]):02d}', text)
     return COMPACT_RANGE_END.sub(r'\1\2:\3', text)
 

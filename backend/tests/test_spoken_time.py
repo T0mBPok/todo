@@ -201,7 +201,12 @@ def test_same_time_applies_to_every_explicit_weekday_after_recurrence_expansion(
     assert all(t.end.astimezone(zone).strftime('%H:%M')=='09:00' for t in result.tasks)
 
 
-def test_declarative_new_event_bypasses_existing_event_selection(client, monkeypatch):
+@pytest.mark.parametrize('transcript', [
+    'В пятницу 27-го числа с 10:00 утра до 3 часов дня пары по ТСП.',
+    'В пятницу 27-го числа, с 10:00 ут до 3 00 дня пары по ТСП.',
+    'В пятницу 27-го числа, с 10 00 утра до 3 00 дня пары по ТСП.',
+])
+def test_declarative_new_event_bypasses_existing_event_selection(client, monkeypatch, transcript):
     api, _ = client
     monkeypatch.setattr(ai.config, 'AI_PROVIDER', 'gigachat')
     def reject_selection(*args):
@@ -214,8 +219,7 @@ def test_declarative_new_event_bypasses_existing_event_selection(client, monkeyp
             note='', needs_clarification=False).model_dump_json()
         return httpx.Response(200, request=httpx.Request('POST', url), json={'message': {'content': content}})
     monkeypatch.setattr(ai, 'ai_post', model)
-    result = api.post('/api/commands', json={'text':
-        'В пятницу 27-го числа с 10:00 утра до 3 часов дня пары по ТСП.', 'timezone': 'Asia/Tomsk'})
+    result = api.post('/api/commands', json={'text': transcript, 'timezone': 'Asia/Tomsk'})
     assert result.status_code == 200, result.text
     draft = result.json()['plan']
     assert len(draft['tasks']) == 1

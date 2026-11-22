@@ -98,7 +98,7 @@ class CommandService:
             if config.AI_PROVIDER == 'gigachat':
                 normalized_command, _ = AIPlanner().normalize(normalized_command)
             if (len(request.text) > 750 and explicit_calendar_add(request.text)
-                    or not request.context_task_id and declarative_calendar_add(request.text)):
+                    or not request.context_task_id and declarative_calendar_add(normalized_command)):
                 decision = Decision(intent='create', note='')
             else:
                 context, mapping = calendar_context(request, self.tasks)

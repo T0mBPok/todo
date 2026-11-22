@@ -85,7 +85,8 @@ def polish_transcript(result):
         text,_=AIPlanner().normalize(raw)
         spoken_numbers = lambda value: Counter(match[1].casefold() for match in re.finditer(
             r'\b(девятнадцат|восемнадцат|семнадцат|шестнадцат|пятнадцат|четырнадцат|тринадцат|двенадцат|одиннадцат|двадцат|тридцат|девяност|восем|девят|десят|сорок|сем|шест|пят|четыр|три|дв|один|одн|полтор|полчас|утр|вечер|ноч)\w*',value,re.I))
-        if spoken_numbers(raw) != spoken_numbers(text):
+        from app.plans.prompts import normalize_transcript
+        if spoken_numbers(normalize_transcript(raw)) != spoken_numbers(text):
             text=raw
         result['text']=text
         result['postprocessed']=True

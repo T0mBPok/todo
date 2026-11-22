@@ -14,7 +14,7 @@ ZONE = 'Asia/Tomsk'
     ('Сегодня мероприятие с семи тридцати до 9.', 'Сегодня мероприятие с 19:30 до 21:00.'),
     ('Сегодня мероприятие с 7:30 до девяти.', 'Сегодня мероприятие с 19:30 до 21:00.'),
     ('Сегодня тренировка с 11:30 до 12:30.', 'Сегодня тренировка с 11:30 до 12:30.'),
-    ('В субботу волейбол с 11:0 до 12:00.', 'В субботу волейбол с 11:0 до 12:00.'),
+    ('В субботу волейбол с 11:0 до 12:00.', 'В субботу волейбол с 11:00 до 12:00.'),
     ('Завтра концерт с семи тридцати до девяти вечера.', 'Завтра концерт с 19:30 до 21:00.'),
     ('Завтра занятие с 7 утра до девяти.', 'Завтра занятие с 07:00 до 09:00.'),
     ('Отпуск с 3 до 6 ноября.', 'Отпуск с 3 до 6 ноября.'),
@@ -37,3 +37,18 @@ def test_question_identifies_the_ambiguous_event(source, expected):
 @pytest.mark.parametrize('end', ['3 часов дня', 'трёх часов дня', '15 часов'])
 def test_spoken_hour_unit_preserves_daypart(end):
     assert resolve_colloquial_ranges(f'В пятницу с 10:00 утра до {end} пары.', ZONE, now=NOW) == 'В пятницу с 10:00 до 15:00 пары.'
+
+
+@pytest.mark.parametrize('source', [
+    'В пятницу с 10:00 ут до 3 00 дня пары.',
+    'В пятницу с 10 00 утра до 3 00 дня пары.',
+    'В пятницу с 10:00 утра до 3 00 дня пары.',
+])
+def test_asr_split_clocks_and_truncated_morning(source):
+    assert resolve_colloquial_ranges(source, ZONE, now=NOW) == 'В пятницу с 10:00 до 15:00 пары.'
+
+
+@pytest.mark.parametrize('source', ['Купить 3 00 рубля', 'В 10 30 минут зарядка', '27-го числа пары', 'Версия 3 00 приложения'])
+def test_clock_cleanup_leaves_non_time_numbers(source):
+    from app.plans.dates import normalize_clock_minutes
+    assert normalize_clock_minutes(source) == source

@@ -36,3 +36,15 @@ def test_cleanup_cannot_change_spoken_numbers_or_time_of_day(monkeypatch):
     monkeypatch.setattr(AIPlanner,'normalize',lambda self,text:('Тренировка завтра с восьми до девяти утра.',''))
     raw='Тренировка завтра с восемнадцати до девятнадцати вечера.'
     assert polish_transcript({'text':raw})['text']==raw
+
+
+def test_cleanup_accepts_safe_clock_artifact_repair(monkeypatch):
+    import httpx, json
+    from app.plans import ai
+    raw = 'В пятницу 27-го числа, с 10:00 ут до 3 00 дня пары по ТСП.'
+    fixed = 'В пятницу 27-го числа с 10:00 утра до 3:00 дня пары по ТСП.'
+    monkeypatch.setattr(ai, 'ai_post', lambda url, **kwargs: httpx.Response(200,
+        request=httpx.Request('POST', url), json={'message': {'content': json.dumps({'text': fixed, 'note': ''})}}))
+    result = polish_transcript({'text': raw})
+    assert result['text'] == 'В пятницу 27-го числа с 10:00 утра до 03:00 дня пары по ТСП.'
+    assert result['raw_text'] == raw
