@@ -6,6 +6,27 @@ from fastapi import HTTPException
 from app.core import config
 from app.todos.schemas import Decision
 from app.todos.prompts import task_extraction_rules
+from datetime import date,datetime
+from pydantic import TypeAdapter,ValidationError
+def parse_decision(content):
+    value=json.loads(content)
+    invalid=set()
+    # AI output is an extraction proposal. A malformed schedule must not
+    # discard a valid task when the original speech can supply its clock.
+    if isinstance(value,dict) and isinstance(value.get('actions'),list):
+        for index,action in enumerate(value['actions']):
+            if not isinstance(action,dict):continue
+            for field,kind in [('scheduled_date',date),('scheduled_at',datetime)]:
+                if action.get(field) is None:continue
+                try:TypeAdapter(kind).validate_python(action[field])
+                except ValidationError as error:
+                    action[field]=None
+                    invalid.add(index)
+                    log_result_rejection('todo_command','invalid_schedule_field',error)
+    result=Decision.model_validate(value)
+    for index in invalid:result.actions[index]._invalid_schedule=True
+    return result
+
 def interpret(text,context,history=None,timezone='Asia/Tomsk'):
     prompt="""Ты управляешь списком ЗАДАЧ, а не событиями календаря. Из русской разговорной речи выдели дела, которые надо сделать. Дата и время НЕ обязательны. Если пользователь назвал дату выполнения, заполни scheduled_date (YYYY-MM-DD). Если назвал ещё и время — scheduled_at ISO8601 с часовым поясом пользователя и ту же scheduled_date. Дата без времени не означает полночь: scheduled_at=null. Без даты оба поля null. schedule_text — дословная часть запроса с датой/временем именно этой задачи. «27-го числа в шесть вечера» — ближайшее 27-е в 18:00 местного времени. При update без просьбы о переносе не меняй расписание. «Убери дату, без срока» — clear_schedule=true. «Без времени, только день» — clear_time=true. Не смешивай даты разных задач. Это задачи с отметкой выполнения, а не встречи.
 Новые дела: отдельный create для каждой самостоятельной задачи, краткий title и подробности description. Убирай слова-паразиты, исправляй очевидные ошибки речи, не выдумывай дела. «Купить продукты и закончить отчёт» — две задачи.
@@ -35,7 +56,7 @@ def interpret(text,context,history=None,timezone='Asia/Tomsk'):
         response=ai_post(config.OLLAMA_BASE_URL+'/api/chat',timeout=180,operation='todo_command',json={'model':config.OLLAMA_MODEL,'stream':False,'think':False,'keep_alive':'10m','format':schema,'options':{'temperature':0,'num_ctx':8192,'num_predict':2200},'messages':[{'role':'system','content':prompt},{'role':'user','content':user_content}]})
         response.raise_for_status();data=response.json()
         if data.get('done_reason')=='length':raise HTTPException(502,'Модель не завершила разбор. Разделите запрос.')
-        result=Decision.model_validate_json(data['message']['content'])
+        result=parse_decision(data['message']['content'])
         from app.core.priority import classify_category
         for action in result.actions:
             if action.action=='create' and action.category is None:

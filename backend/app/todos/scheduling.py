@@ -23,7 +23,7 @@ def grounded_schedule(action, source, zone_name):
     if action.clear_schedule:
         return {'scheduled_date': None, 'scheduled_at': None, 'timezone': zone_name}, False
     if not source:
-        return {'scheduled_date': day, 'scheduled_at': at, 'timezone': zone_name}, bool(day or at)
+        return {'scheduled_date': day, 'scheduled_at': at, 'timezone': zone_name}, bool(day or at or action._invalid_schedule)
     numeric = None
     anchors = list(ANCHOR.finditer(source))
     if anchors:
@@ -72,7 +72,7 @@ def grounded_schedule(action, source, zone_name):
     spoken_date = bool(anchors or numeric)
     if not spoken_date and (day or at):
         return {'scheduled_date': day, 'scheduled_at': at, 'timezone': zone_name}, True
-    uncertain = bool(reviews or at and not clock)
+    uncertain = bool(reviews or at and not clock or action._invalid_schedule and not (spoken_date and clock))
     return {'scheduled_date': day, 'scheduled_at': at, 'timezone': zone_name}, uncertain
 
 

@@ -137,3 +137,34 @@ def test_model_cannot_turn_date_only_task_into_midnight_event():
     schedule,review=grounded_schedule(action,'Отчёт 27-го числа','Asia/Tomsk')
     assert schedule['scheduled_at'] is None
     assert not review
+
+
+@pytest.mark.parametrize('bad_time',['18:00','6 часов вечера','2026-11-27 18:00 Asia/Tomsk','2026-11-27T18:00:00+7:00',''])
+def test_malformed_model_clock_is_recovered_from_original_speech(client,monkeypatch,bad_time):
+    import json
+    from app.todos.ai import parse_decision
+    api,_=client
+    text='На 27-е число, на 6 часов вечера, поставь задачу сделать адаптив для мобилки.'
+    decision=parse_decision(json.dumps({'actions':[{'action':'create','title':'Сделать адаптив для мобилки','scheduled_date':'2026-11-27','scheduled_at':bad_time,'schedule_text':'27 ноября 18:00'}],'note':'Добавить адаптив'}))
+    monkeypatch.setattr(service,'interpret',lambda *a:decision)
+    draft=api.post('/api/todos/commands/prepare',json={'text':text,'timezone':'Asia/Tomsk'})
+    assert draft.status_code==200,draft.text
+    assert not draft.json()['requires_confirmation']
+    saved=api.post('/api/todos/commands/'+draft.json()['id']+'/execute')
+    assert saved.status_code==200,saved.text
+    task=saved.json()['tasks'][0]
+    assert task['scheduled_date']=='2026-11-27'
+    assert datetime.fromisoformat(task['scheduled_at']).astimezone(ZoneInfo('Asia/Tomsk')).strftime('%H:%M')=='18:00'
+
+
+def test_unrecoverable_model_time_is_not_silently_auto_saved():
+    from app.todos.ai import parse_decision
+    value=parse_decision('{"actions":[{"action":"create","title":"Отчёт","scheduled_at":"bad clock"}],"note":""}')
+    assert grounded_schedule(value.actions[0],'Сделать отчёт','Asia/Tomsk')[1]
+
+
+def test_broken_schedule_does_not_relax_action_or_title_validation():
+    from app.todos.ai import parse_decision
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        parse_decision('{"actions":[{"action":"invented","scheduled_at":"bad clock"}],"note":""}')

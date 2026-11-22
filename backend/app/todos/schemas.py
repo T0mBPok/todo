@@ -1,7 +1,7 @@
 from datetime import datetime, date, timezone
 from uuid import UUID
 from typing import Literal
-from pydantic import BaseModel,ConfigDict,Field,AwareDatetime,model_validator,field_validator
+from pydantic import BaseModel,ConfigDict,Field,AwareDatetime,model_validator,field_validator,PrivateAttr
 from app.core.priority import Category
 from zoneinfo import ZoneInfo
 from app.plans.schemas import PlanRequest
@@ -43,6 +43,7 @@ class Completion(BaseModel):
     completed: bool
 
 class Action(BaseModel):
+    _invalid_schedule: bool = PrivateAttr(default=False)
     scheduled_date: date|None=None
     scheduled_at: datetime|None=None
     schedule_text: str|None=Field(default=None,max_length=1000,description='Точный фрагмент речи с датой и временем только этой задачи; не выдумывай.')
