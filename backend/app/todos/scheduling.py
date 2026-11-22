@@ -47,7 +47,7 @@ def grounded_schedule(action, source, zone_name):
         if numeric:
             day, _ = explicit_weekday_date(source[numeric.start():], today)
     reviews = []
-    spoken = normalize_transcript(resolve_colloquial_ranges(source, zone_name, reviews=reviews))
+    spoken = normalize_todo_speech(resolve_colloquial_ranges(normalize_todo_speech(source), zone_name, reviews=reviews))
     slots = list(spoken_slots(spoken))
     clock = slots[0][1] if len(slots) == 1 else None
     if not clock:
@@ -76,10 +76,51 @@ def grounded_schedule(action, source, zone_name):
     return {'scheduled_date': day, 'scheduled_at': at, 'timezone': zone_name}, uncertain
 
 
+
+DATE_TOKEN = re.compile(ANCHOR.pattern + r'|\b\d{1,2}(?:[-–](?:го|ого|е|ое)(?:\s+числ[ао])?|\s+числ[ао]|\s+(?:'+'|'.join(MONTHS)+r'))\b', re.I)
+
+
+def normalize_todo_speech(text):
+    text=re.sub(r'\b([01]?\d|2[0-3]):0{3,}\b',r'\1:00',text)
+    return normalize_transcript(text)
+
+
 def task_fragment(text, title):
-    from app.plans.dates import SENTENCE_BREAK, words
-    fragments = [fragment.strip() for fragment in SENTENCE_BREAK.split(text) if fragment.strip()]
+    from app.plans.dates import SENTENCE_BREAK, START_TIME, words
+    text=normalize_todo_speech(text)
+    fragments=[]
+    # Split clock-led lists before matching titles. One sentence can contain
+    # several tasks; passing all its clocks to one task defeats verification.
+    for sentence in SENTENCE_BREAK.split(text):
+        starts=list(START_TIME.finditer(sentence))
+        if len(starts)>1:
+            fragments.extend(sentence[match.start():starts[i+1].start() if i+1<len(starts) else len(sentence)].strip()
+                             for i,match in enumerate(starts))
+        elif sentence.strip():fragments.append(sentence.strip())
     target=set(words(title.replace('ё','е')))
     scores=[len(target & set(words(fragment.replace('ё','е')))) for fragment in fragments]
     best=max(scores,default=0)
-    return fragments[scores.index(best)] if best and scores.count(best)==1 else ''
+    if not best or scores.count(best)!=1:return ''
+    fragment=fragments[scores.index(best)]
+    if (not DATE_TOKEN.search(fragment) and START_TIME.search(fragment)
+            and not re.search(r'без\s+(?:дат\w*|срок\w*)',fragment,re.I)):
+        position=text.find(fragment)
+        dates=list(DATE_TOKEN.finditer(text[:position]))
+        if dates:fragment=dates[-1][0]+' '+fragment
+    return fragment
+
+
+def clean_scheduled_title(title, schedule):
+    if not schedule or not schedule.get('scheduled_date'):return title
+    day=schedule['scheduled_date']
+    if isinstance(day,str):day=datetime.fromisoformat(day).date()
+    clock=r'(?:\d{1,2}(?::\d{2})?|'+ '|'.join(CARDINALS)+r'|'+ '|'.join(CARDINALS.values())+r')\s*(?:час(?:а|ов)?\s*)?(?:утра|дня|вечера|ночи)?'
+    suffix=rf'\s+(?:на\s+)?{day.day}(?:-го|-е)?\s+(?:{MONTHS[day.month-1]}|числ[ао])(?:\s+\d{{4}}(?:\s+года)?)?(?:\s+(?:в|на)\s+{clock})?[.!]?$'
+    match=re.search(suffix,title,re.I)
+    if match:
+        prefix=title[:match.start()].strip()
+        if prefix and not re.search(r'\bза$',prefix,re.I):title=prefix
+    if schedule.get('scheduled_at'):
+        prefix=re.sub(rf'\s+(?:в|на)\s+{clock}[.!]?$', '',title,flags=re.I).strip()
+        if prefix:title=prefix
+    return title

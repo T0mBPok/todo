@@ -20,3 +20,13 @@ test('date-only scheduling stays a calendar date in every browser timezone',()=>
   assert.match(todoScheduleLabel(item),/27/)
  }
 })
+
+
+test('calendar and list titles omit schedule suffixes but preserve meaningful dates',async()=>{
+ const {todoDisplayTitle}=await import('../src/entities/todos/calendar.js')
+ const scheduled={scheduled_date:'2026-11-27',scheduled_at:'2026-11-27T06:00:00+07:00'}
+ assert.equal(todoDisplayTitle({...scheduled,title:'Пробежка 27 ноября в 6 утра'}),'Пробежка')
+ assert.equal(todoDisplayTitle({...scheduled,title:'Пробежка в 06:00'}),'Пробежка')
+ assert.equal(todoDisplayTitle({...scheduled,title:'Отчёт за 27 ноября'}),'Отчёт за 27 ноября')
+ assert.equal(todoDisplayTitle({...scheduled,title:'Купить 6 стульев'}),'Купить 6 стульев')
+})

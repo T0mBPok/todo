@@ -214,6 +214,12 @@ function slotClick(event,day) {
 </template>
 
 <style scoped>
+.calendar-event:not(.calendar-todo-position){display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;padding-top:7px;text-align:left;gap:3px}
+.calendar-event strong{font-size:14px;line-height:1.3}
+.calendar-event-time{font-size:12px}
+.month-event strong{font-size:12px;line-height:1.25}
+@media(max-width:760px){.calendar-event strong{font-size:13px}}
+
 @media(max-width:760px){.calendar-event-time{display:none}}
 .calendar-todo-position{min-height:32px;padding:5px 7px;text-align:left;}
 .continuous-calendar-scroll { flex:1; min-height:0; overflow:auto; overscroll-behavior-x:contain; touch-action:auto; overflow-anchor:none; }

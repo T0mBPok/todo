@@ -7,7 +7,7 @@ from sqlalchemy import select
 from app.todos.dao import TodoDAO
 from app.todos.schemas import TodoInput,TodoRead
 from app.todos.ai import interpret
-from app.todos.scheduling import grounded_schedule, task_fragment
+from app.todos.scheduling import grounded_schedule, task_fragment, clean_scheduled_title
 from pydantic import ValidationError
 from app.commands.models import Command
 from app.tasks.service import calendar_lock
@@ -52,11 +52,12 @@ class TodoService:
             if action.action in {'create','update'}:
                 fragment=action.schedule_text or ''
                 literal=' '.join(fragment.lower().split()) in ' '.join(data.text.lower().split())
-                source=fragment if fragment and literal else (data.text if len(schedule_actions)==1 else task_fragment(data.text,action.title or ''))
+                source=(data.text if len(schedule_actions)==1 else task_fragment(data.text,action.title or '')) or (fragment if literal else '')
                 if action.action=='create' or action.scheduled_date or action.scheduled_at or action.clear_schedule or action.clear_time or action.schedule_text:
                     schedule, uncertain=grounded_schedule(action,source,data.timezone)
                     schedule_review=schedule_review or uncertain
             if action.action=='create':
+                if action.title:action.title=clean_scheduled_title(action.title,schedule)
                 if not action.title:raise HTTPException(502,'Модель не указала название задачи.')
                 if not action.title.strip():raise HTTPException(502,'Модель вернула пустое название задачи.')
                 TodoInput(title=action.title,description=action.description or '',**(schedule or {}))

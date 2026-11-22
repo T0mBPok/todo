@@ -168,3 +168,37 @@ def test_broken_schedule_does_not_relax_action_or_title_validation():
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
         parse_decision('{"actions":[{"action":"invented","scheduled_at":"bad clock"}],"note":""}')
+
+
+@pytest.mark.parametrize('zone',['Asia/Tomsk','Europe/Moscow','America/New_York'])
+def test_clock_led_list_inherits_date_and_preserves_each_wall_clock(client,monkeypatch,zone):
+    api,_=client
+    source=('На 27-е число, поставь по порядку на каждый час, начиная с 11:00. '
+      'Э-э-э, в 11:000, нахуй, задача — отмыть холодоц, в 12:0 задача — отмыть пол, '
+      'в 13:00 задача отмыть стены. В 14:00 задача — помыть дверь входную. Серийный убийца.')
+    titles=['Отмыть холодильник','Отмыть пол','Отмыть стены','Помыть входную дверь']
+    # Model outputs are reordered, with the exact UTC offset error seen in UI.
+    actions=[Action(action='create',title=title,scheduled_date='2026-11-27',
+       scheduled_at=f'2026-11-27T{11+i}:00:00Z') for i,title in enumerate(titles)]
+    monkeypatch.setattr(service,'interpret',lambda *a:Decision(note='',actions=list(reversed(actions))))
+    response=api.post('/api/todos/commands/prepare',json={'text':source,'timezone':zone})
+    assert response.status_code==200,response.text
+    assert not response.json()['requires_confirmation']
+    expected=dict(zip(titles,['11:00','12:00','13:00','14:00']))
+    for op in response.json()['operations']:
+        assert op['schedule']['scheduled_date']=='2026-11-27'
+        assert datetime.fromisoformat(op['schedule']['scheduled_at']).astimezone(ZoneInfo(zone)).strftime('%H:%M')==expected[op['action']['title']]
+    saved=api.post('/api/todos/commands/'+response.json()['id']+'/execute')
+    assert saved.status_code==200,saved.text
+    assert len(saved.json()['tasks'])==4
+
+
+@pytest.mark.parametrize(('title','expected'),[
+ ('Пробежка 27 ноября в 6 утра','Пробежка'),
+ ('Пробежка в 06:00','Пробежка'),
+ ('Отчёт за 27 ноября','Отчёт за 27 ноября'),
+ ('Купить 6 стульев','Купить 6 стульев'),
+])
+def test_schedule_is_not_part_of_task_title(title,expected):
+    from app.todos.scheduling import clean_scheduled_title
+    assert clean_scheduled_title(title,{'scheduled_date':'2026-11-27','scheduled_at':'2026-11-27T06:00+07:00'})==expected

@@ -2,12 +2,13 @@
 import { ref, nextTick } from 'vue'
 import { request, localDate } from '../../shared/api.js'
 import { errorMessage } from '../../shared/errors.js'
+import {todoDisplayTitle} from './calendar.js'
 import { categories } from '../../shared/categories.js'
 const emit=defineEmits(['saved'])
 const dialog=ref(null), form=ref(null), busy=ref(false), error=ref(''), deleting=ref(false)
 const date=ref(''), time=ref('')
 async function open(todo={}) {
-  form.value={title:'',description:'',category:'important_not_urgent',completed:false,...todo,id:todo.todo_id||todo.id}
+  form.value={title:'',description:'',category:'important_not_urgent',completed:false,...todo,title:todoDisplayTitle(todo),id:todo.todo_id||todo.id}
   date.value=todo.scheduled_at?localDate(todo.scheduled_at).slice(0,10):todo.scheduled_date||''
   time.value=todo.scheduled_at?localDate(todo.scheduled_at).slice(11,16):''
   error.value='';deleting.value=false
