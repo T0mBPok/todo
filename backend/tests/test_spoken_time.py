@@ -199,3 +199,41 @@ def test_same_time_applies_to_every_explicit_weekday_after_recurrence_expansion(
     assert {t.start.astimezone(zone).weekday() for t in result.tasks}=={4,6}
     assert all(t.start.astimezone(zone).strftime('%H:%M')=='08:00' for t in result.tasks)
     assert all(t.end.astimezone(zone).strftime('%H:%M')=='09:00' for t in result.tasks)
+
+
+def test_declarative_new_event_bypasses_existing_event_selection(client, monkeypatch):
+    api, _ = client
+    monkeypatch.setattr(ai.config, 'AI_PROVIDER', 'gigachat')
+    def reject_selection(*args):
+        pytest.fail('New dated event must not select existing calendar refs')
+    monkeypatch.setattr(grounded_ai, 'interpret_calendar', reject_selection)
+    monkeypatch.setattr(ai.AIPlanner, 'normalize', lambda self, text: (text, ''))
+    def model(url, **kwargs):
+        content = ai.ExtractedPlan(tasks=[{'title': 'Пары по ТСП',
+            'start': '2026-11-27T10:00:00Z', 'end': '2026-11-27T15:00:00Z'}],
+            note='', needs_clarification=False).model_dump_json()
+        return httpx.Response(200, request=httpx.Request('POST', url), json={'message': {'content': content}})
+    monkeypatch.setattr(ai, 'ai_post', model)
+    result = api.post('/api/commands', json={'text':
+        'В пятницу 27-го числа с 10:00 утра до 3 часов дня пары по ТСП.', 'timezone': 'Asia/Tomsk'})
+    assert result.status_code == 200, result.text
+    draft = result.json()['plan']
+    assert len(draft['tasks']) == 1
+    item = draft['tasks'][0]
+    zone = ZoneInfo('Asia/Tomsk')
+    assert datetime.fromisoformat(item['start']).astimezone(zone).isoformat() == '2026-11-27T10:00:00+07:00'
+    assert datetime.fromisoformat(item['end']).astimezone(zone).isoformat() == '2026-11-27T15:00:00+07:00'
+    confirmed = api.post(f"/api/plans/{draft['id']}/confirm", json={'tasks': draft['tasks']})
+    assert confirmed.status_code == 200, confirmed.text
+
+
+@pytest.mark.parametrize('text', [
+    'В пятницу перенеси пары с 10 утра до 3 часов дня.',
+    'В пятницу удали пары с 10 утра до 3 часов дня.',
+    'В пятницу измени описание пары с 10 утра до 3 часов дня.',
+    'В пятницу с 10 утра до 3 часов дня это событие.',
+    'В пятницу с 10 утра до 3 часов дня пары?',
+])
+def test_management_and_questions_do_not_route_as_new_events(text):
+    from app.commands.matching import declarative_calendar_add
+    assert not declarative_calendar_add(text)

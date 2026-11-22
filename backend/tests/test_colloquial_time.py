@@ -32,3 +32,8 @@ def test_question_identifies_the_ambiguous_event(source, expected):
         resolve_colloquial_ranges(source, ZONE, now=NOW)
     assert error.value.status_code == 422
     assert all(part in error.value.detail for part in expected)
+
+
+@pytest.mark.parametrize('end', ['3 часов дня', 'трёх часов дня', '15 часов'])
+def test_spoken_hour_unit_preserves_daypart(end):
+    assert resolve_colloquial_ranges(f'В пятницу с 10:00 утра до {end} пары.', ZONE, now=NOW) == 'В пятницу с 10:00 до 15:00 пары.'

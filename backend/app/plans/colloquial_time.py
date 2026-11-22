@@ -22,7 +22,7 @@ HOUR_FORMS = sorted(HOURS, key=len, reverse=True)
 HOUR_WORD = '|'.join(HOUR_FORMS)
 MINUTE_WORD = '|'.join(MINUTES)
 NUMBER = r'(?:[01]?\d|2[0-3])(?::[0-5]?\d)?(?![\d:]|\.\d)'
-POINT = rf'(?:{NUMBER}|(?:{HOUR_WORD})(?:\s+(?:{MINUTE_WORD}))?)(?:\s+(?:{DAY_PART}))?'
+POINT = rf'(?:{NUMBER}|(?:{HOUR_WORD})(?:\s+(?:{MINUTE_WORD}))?)(?:\s+час(?:а|ов)?)?(?:\s+(?:{DAY_PART}))?'
 RANGE = re.compile(rf'\bс\s+({POINT})\s+до\s+({POINT})\b', re.I)
 CLAUSE_BOUNDARY = re.compile(r',(?!\d)|\b(?:потом|затем|а\s+ещ[её]|и\s+ещ[её])\b', re.I)
 DAY_SHIFT = re.compile(r'\b(?:работ[ауые]|рабоч\w*\s+день|смен[ауые])\b', re.I)
@@ -46,7 +46,7 @@ class RangeReview:
 def possible_minutes(point):
     suffix = re.search(rf'\s+({DAY_PART})$', point, re.I)
     value = point[:suffix.start()] if suffix else point
-    value = ' '.join(value.casefold().split())
+    value = re.sub(r'\s+час(?:а|ов)?$', '', ' '.join(value.casefold().split()))
     numeric = re.fullmatch(r'(\d{1,2})(?::(\d{1,2}))?', value)
     if numeric:
         hour, minute = int(numeric[1]), int(numeric[2] or 0)

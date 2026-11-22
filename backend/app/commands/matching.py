@@ -99,6 +99,18 @@ def explicit_calendar_add(text):
     return bool(_ADD_TO_CALENDAR.search(text[:150]) and not CHANGES_EXISTING.search(text))
 
 
+def declarative_calendar_add(text):
+    # A dated statement with an interval describes a new event. Mutations and
+    # references to an existing event must still go through grounded selection.
+    from app.plans.colloquial_time import RANGE
+    return bool(
+        re.match(r'\s*(?:в\s+|на\s+)?(?:' + ANCHOR.pattern + r')', text, re.I)
+        and RANGE.search(text)
+        and not CHANGES_EXISTING.search(text)
+        and not re.search(r'\b(?:эту?|это|его|е[её]|тот|ту|длительность|описание|повторяющ\w*)\b|[?]', text, re.I)
+    )
+
+
 def exact_title(target, title):
     def normalized(value):
         return ['тренировка' if word in {'тренировку', 'тренировки', 'тренировке'} else word
