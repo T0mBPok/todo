@@ -2,18 +2,18 @@ from app.core.ai_client import ai_post
 import json
 import re
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import httpx
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from app.core import config
 from app.core.request_logging import log_result_rejection
 from app.plans.schemas import PlanCheck, PlanOutput
 from app.plans.review import build_review
 from app.plans.colloquial_time import resolve_colloquial_ranges
 from app.tasks.schemas import TaskInput
-from app.plans.dates import ANCHOR, TIME_RANGE, enforce_date_context, enforce_spoken_time
+from app.plans.dates import ANCHOR, TIME_RANGE, enforce_date_context, enforce_spoken_time, spoken_slots, words
 from app.recurrences.speech import apply_spoken_recurrence
 from app.plans.prompts import planning_prompt, normalize_transcript, normalization_prompt
 
@@ -23,6 +23,33 @@ class ExtractedPlan(BaseModel):
     note: str
     needs_clarification: bool
     review: list[PlanCheck] = Field(default_factory=list, max_length=30)
+
+def parse_plan(content, spoken, timezone_name):
+    value=json.loads(content)
+    if isinstance(value,dict) and isinstance(value.get('tasks'),list):
+        slots=list(spoken_slots(normalize_transcript(spoken)))
+        for raw in value['tasks']:
+            if not isinstance(raw,dict) or not isinstance(raw.get('title'),str):continue
+            try:
+                for field in ('start','end'):TypeAdapter(AwareDatetime).validate_python(raw.get(field))
+            except ValidationError as error:
+                # Repair only a fully spoken, uniquely matched interval with a
+                # date. Invalid model JSON must not become an invented schedule.
+                if not ANCHOR.search(spoken):continue
+                tokens=set(words(raw['title']))
+                scores=[len(tokens & set(words(clause))) for clause,_,_ in slots]
+                best=max(scores,default=0)
+                if not best or scores.count(best)!=1:continue
+                clause,_,last=slots[scores.index(best)]
+                if not last:continue
+                now=datetime.now(ZoneInfo(timezone_name))
+                candidate=TaskInput(title=raw['title'],start=now,end=now+timedelta(hours=1))
+                enforce_date_context([candidate],spoken,timezone_name)
+                enforce_spoken_time([candidate],clause,timezone_name)
+                raw['start']=candidate.start.isoformat()
+                raw['end']=candidate.end.isoformat()
+                log_result_rejection('calendar_plan','recovered_datetime_field',error)
+    return ExtractedPlan.model_validate(value)
 
 class AIPlanner:
     def normalize(self, text):
@@ -90,7 +117,7 @@ class AIPlanner:
             data = response.json()
             if data.get('done_reason') == 'length':
                 raise HTTPException(502, 'План слишком большой. Разделите запрос на несколько частей.')
-            parsed = ExtractedPlan.model_validate_json(data['message']['content'])
+            parsed = parse_plan(data['message']['content'], spoken, request.timezone)
             if not parsed.tasks:
                 raise HTTPException(422, parsed.note or 'Уточните день, время и задачу.')
             model_reasons = {parsed.tasks[item.task_index].title: item.reason for item in parsed.review

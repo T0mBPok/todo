@@ -241,3 +241,57 @@ def test_declarative_new_event_bypasses_existing_event_selection(client, monkeyp
 def test_management_and_questions_do_not_route_as_new_events(text):
     from app.commands.matching import declarative_calendar_add
     assert not declarative_calendar_add(text)
+
+
+@pytest.mark.parametrize('zone_name',['Asia/Tomsk','Europe/Moscow','America/New_York'])
+@pytest.mark.parametrize('source',[
+ 'В пятницу 27-го числа поставь работу с 08:00 до 09:00. Тренировку с 12:00ня до 13:00 дня и встречу с друзьями с 09:00 вечера до 11: вечера.',
+ 'В пятницу 27-го числа поставь работу с 08:00 до 09:00. Тренировку с 12:0ня до 13:00 дня и встречу с друзьями с 09:00вечера до 11:вечера.',
+])
+def test_three_events_with_corrupted_dayparts_keep_local_intervals(client,monkeypatch,zone_name,source):
+    api,_=client
+    monkeypatch.setattr(ai.config,'AI_PROVIDER','gigachat')
+    monkeypatch.setattr(ai.AIPlanner,'normalize',lambda self,text:(text,''))
+    monkeypatch.setattr(grounded_ai,'interpret_calendar',lambda *a:grounded_ai.Decision(intent='create',note=''))
+    wrong=ai.ExtractedPlan(tasks=[
+      {'title':'Встреча с друзьями','start':'2026-11-27T21:00:00Z','end':'2026-11-27T23:00:00Z'},
+      {'title':'Работа','start':'2026-11-27T08:00:00Z','end':'2026-11-27T09:00:00Z'},
+      {'title':'Тренировка','start':'2026-11-27T12:00:00Z','end':'2026-11-27T13:00:00Z'}],note='',needs_clarification=False)
+    monkeypatch.setattr(ai,'ai_post',lambda url,**kw:httpx.Response(200,request=httpx.Request('POST',url),json={'message':{'content':wrong.model_dump_json()}}))
+    response=api.post('/api/commands',json={'text':source,'timezone':zone_name})
+    assert response.status_code==200,response.text
+    draft=response.json()['plan']
+    assert draft['review']==[]
+    expected={'Работа':('08:00','09:00'),'Тренировка':('12:00','13:00'),'Встреча с друзьями':('21:00','23:00')}
+    saved=api.post('/api/plans/'+draft['id']+'/confirm',json={'tasks':draft['tasks']})
+    assert saved.status_code==200,saved.text
+    for event in api.get('/api/tasks').json():
+      local=[datetime.fromisoformat(event[key]).astimezone(ZoneInfo(zone_name)) for key in ('start','end')]
+      assert tuple(t.strftime('%H:%M') for t in local)==expected[event['title']]
+      assert all(t.date().isoformat()=='2026-11-27' for t in local)
+
+
+def test_unparseable_explicit_clock_is_flagged_even_when_other_event_is_valid():
+    from app.plans.dates import enforce_spoken_time
+    from app.tasks.schemas import TaskInput
+    tasks=[TaskInput(title='Работа',start='2026-11-27T08:00:00+07:00',end='2026-11-27T09:00:00+07:00'),
+      TaskInput(title='Тренировка',start='2026-11-27T19:00:00+07:00',end='2026-11-27T20:00:00+07:00')]
+    unresolved=enforce_spoken_time(tasks,'Работа с 08:00 до 09:00. Тренировка с 12:непонятно до 13:непонятно.','Asia/Tomsk')
+    assert unresolved=={1}
+
+
+@pytest.mark.parametrize('bad_field',['start','end'])
+def test_malformed_model_datetime_recovers_only_from_explicit_spoken_interval(bad_field):
+    content={'tasks':[{'title':'Тренировка','start':'2026-11-27T12:00:00Z','end':'2026-11-27T13:00:00Z'}], 'note':'','needs_clarification':False}
+    content['tasks'][0][bad_field]='model returned broken time'
+    parsed=ai.parse_plan(json.dumps(content),'В пятницу 27-го числа тренировка с 12:00 до 13:00.','Asia/Tomsk')
+    task=parsed.tasks[0]
+    assert task.start.astimezone(ZoneInfo('Asia/Tomsk')).strftime('%H:%M')=='12:00'
+    assert task.end.astimezone(ZoneInfo('Asia/Tomsk')).strftime('%H:%M')=='13:00'
+    assert task.start.astimezone(ZoneInfo('Asia/Tomsk')).date().isoformat()=='2026-11-27'
+
+
+def test_malformed_model_time_cannot_be_recovered_without_spoken_time():
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        ai.parse_plan(json.dumps({'tasks':[{'title':'Тренировка','start':'broken','end':'broken'}],'note':'','needs_clarification':False}), 'В пятницу тренировка.', 'Asia/Tomsk')

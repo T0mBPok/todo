@@ -52,3 +52,12 @@ def test_asr_split_clocks_and_truncated_morning(source):
 def test_clock_cleanup_leaves_non_time_numbers(source):
     from app.plans.dates import normalize_clock_minutes
     assert normalize_clock_minutes(source) == source
+
+
+@pytest.mark.parametrize(('raw','expected'),[
+ ('Тренировка с 12:00ня до 13:00 дня.','Тренировка с 12:00 до 13:00.'),
+ ('Встреча с 09:00 вечера до 11: вечера.','Встреча с 21:00 до 23:00.'),
+ ('Встреча с 09:00вечера до 11:вечера.','Встреча с 21:00 до 23:00.'),
+])
+def test_asr_attached_daypart_and_missing_minutes(raw,expected):
+    assert resolve_colloquial_ranges(raw,ZONE,now=NOW)==expected

@@ -1,6 +1,5 @@
 """Resolve explicit date anchors in speech independently of model arithmetic."""
 import re
-from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from fastapi import HTTPException
 from zoneinfo import ZoneInfo
@@ -39,7 +38,24 @@ SHORT_CLOCK = re.compile(r'(?<![\d:])([01]?\d|2[0-3]):([0-5]?\d)(?![\d:])')
 COMPACT_RANGE_END = re.compile(rf'({CLOCK}\s+до\s+)([01]\d|2[0-3])([0-5]\d)\b(?![.:]\d)', re.I)
 
 
+DAYPART_ALIASES = {
+    'утра':'утра','ут':'утра','утр':'утра',
+    'дня':'дня','дн':'дня','день':'дня','ня':'дня',
+    'вечера':'вечера','веч':'вечера','вечер':'вечера',
+    'ночи':'ночи','ноч':'ночи','ночь':'ночи','ночью':'ночи',
+}
+DAYPART_TOKENS = '|'.join(sorted(DAYPART_ALIASES,key=len,reverse=True))
+
+
 def normalize_clock_minutes(text):
+    # Colons identify a clock without guessing whether a dotted number is a date.
+    text = re.sub(r'(?<![\d:])([01]?\d|2[0-3])\s*(?:\s*:\s*){1,3}([0-5]?\d)(?![\d:])',
+                  lambda m: f'{int(m[1]):02d}:{int(m[2]):02d}',text)
+    text = re.sub(r'(?<![\d:])([01]?\d|2[0-3]):0{3,}(?![\d:])',lambda m:f'{int(m[1]):02d}:00',text)
+    # A named day part disambiguates a dotted clock from DD.MM.
+    text = re.sub(rf'(?<![\d.])([01]?\d|2[0-3])\.([0-5]\d)(?=\s*(?:{DAYPART_TOKENS})\b)',
+                  lambda m:f'{int(m[1]):02d}:{m[2]}',text,flags=re.I)
+
     # ASR may spell a clock as two number groups. Require a time
     # preposition or a day part so ordinary quantities remain untouched.
     text = re.sub(r'\b((?:с|до|в|во|на|к)\s+)([01]?\d|2[0-3])\s+([0-5]\d)(?![\d:]|\s*(?:руб|минут|секунд))\b',
@@ -47,7 +63,15 @@ def normalize_clock_minutes(text):
     text = re.sub(r'\b([01]?\d|2[0-3])\s+([0-5]\d)(?=\s+(?:утра|дня|вечера|ночи)\b)',
                   r'\1:\2', text, flags=re.I)
     text = re.sub(r'(' + CLOCK + r')\s+ут\b\.?', r'\1 утра', text, flags=re.I)
+    # ASR can leave a bare colon before a day part ("11: вечера")
+    # or glue the damaged suffix "ня" to a clock ("12:00ня").
+    text = re.sub(rf'(?<![\d:])([01]?\d|2[0-3])\s*:\s*(?=(?:{DAYPART_TOKENS})\b)',
+                  lambda match: f'{int(match[1]):02d}:00 ', text, flags=re.I)
     text = SHORT_CLOCK.sub(lambda match: f'{int(match[1]):02d}:{int(match[2]):02d}', text)
+    text = re.sub(rf'({CLOCK})\s*({DAYPART_TOKENS})\b',
+                  lambda match: match[1] + ' ' + DAYPART_ALIASES[match[2].lower()],
+                  text, flags=re.I)
+
     return COMPACT_RANGE_END.sub(r'\1\2:\3', text)
 
 
@@ -109,8 +133,28 @@ def enforce_spoken_time(tasks, text, timezone_name, *alternatives):
     now = datetime.now(zone)
     resolved = set()
     fully_timed = None
+    unverifiable = set()
+    ambiguous_original = set()
     for source in dict.fromkeys((text, *alternatives)):
         slots = list(spoken_slots(source))
+        # A damaged explicit clock must trigger review, even when it yielded
+        # no parseable slot and the model claims its answer is confident.
+        for clause in SENTENCE_BREAK.split(source):
+            clause=DETAIL_MARKER.split(clause,maxsplit=1)[0]
+            if not re.search(r'(?<!\d)\d{1,2}\s*[:./]',clause):continue
+            tokens=set(words(clause))
+            for index,task in enumerate(tasks):
+                if not tokens & set(words(task.title)):continue
+                unverifiable.add(index)
+                # An LLM rewrite is not evidence for ambiguous dates/clocks or
+                # invalid minutes in the original. These keep their review flag.
+                if source == text and (
+                    re.search(r'(?<![\d:])\d{1,2}[./]\d{1,2}(?!\d)',clause)
+                    or re.search(r'\b\d{1,2}:([6-9]\d|\d{3,})(?!\d)',clause)
+                    or re.search(r'\b(?:2[4-9]|[3-9]\d):\d',clause)
+                    or re.search(r'\b\d{1,2}:\d{2}:\d',clause)
+                    or re.search(rf'({CLOCK})[а-яё]+\b',clause,re.I)
+                ):ambiguous_original.add(index)
         if len(slots) == len(tasks) and fully_timed is None:
             fully_timed = slots
         if len(tasks) == 1 and len(slots) == 1:
@@ -155,11 +199,10 @@ def enforce_spoken_time(tasks, text, timezone_name, *alternatives):
             resolved.add(index)
 
     if fully_timed and len(resolved) < len(tasks):
-        expected = Counter(first for _, first, _ in fully_timed)
-        actual = Counter(task.start.astimezone(zone).strftime('%H:%M') for task in tasks)
-        if expected != actual:
-            return set(range(len(tasks))) - resolved
-    return set()
+        # Equal start-clock counts cannot prove event-to-slot correspondence
+        # or correct end times; unmatched events still require review.
+        unverifiable.update(range(len(tasks)))
+    return (unverifiable - resolved) | ambiguous_original
 
 
 STOP = {'потом','после','сразу','будет','меня','университете','завтра','сегодня','него'}
