@@ -295,3 +295,35 @@ def test_malformed_model_time_cannot_be_recovered_without_spoken_time():
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
         ai.parse_plan(json.dumps({'tasks':[{'title':'Тренировка','start':'broken','end':'broken'}],'note':'','needs_clarification':False}), 'В пятницу тренировка.', 'Asia/Tomsk')
+
+
+def test_explicit_multi_create_ignores_selected_event_context(client,monkeypatch):
+    api,_=client
+    source='На пятницу 27-го поставь работу с 08:00 утра до 09:00 утра. Пары с 12:00 00 до 13:00 0ня и встречу с друзьями с 06:00 вечера до 7 вечера.'
+    existing=api.post('/api/tasks',json={'title':'Работа','start':'2026-11-26T08:00:00+07:00','end':'2026-11-26T09:00:00+07:00'}).json()
+    monkeypatch.setattr(ai.config,'AI_PROVIDER','gigachat')
+    monkeypatch.setattr(ai.AIPlanner,'normalize',lambda self,text:(text,''))
+    def must_not_manage(*args):
+        raise AssertionError('Explicit creation entered existing-event interpreter')
+    monkeypatch.setattr(grounded_ai,'interpret_calendar',must_not_manage)
+    result=ai.ExtractedPlan(tasks=[
+      {'title':title,'start':f'2026-11-27T{start}:00:00Z','end':f'2026-11-27T{end}:00:00Z'}
+      for title,start,end in [('Работа','08','09'),('Пары','12','13'),('Встреча с друзьями','18','19')]],note='',needs_clarification=False)
+    monkeypatch.setattr(ai,'ai_post',lambda *a,**kw:httpx.Response(200,request=httpx.Request('POST','http://test'),json={'message':{'content':result.model_dump_json()}}))
+    r=api.post('/api/commands',json={'text':source,'timezone':'Asia/Tomsk','context_task_id':existing['id']})
+    assert r.status_code==200,r.text
+    assert r.json()['kind']=='plan'
+    plan=r.json()['plan']
+    assert not plan['review'],plan
+    assert [datetime.fromisoformat(t['start']).astimezone(ZoneInfo('Asia/Tomsk')).strftime('%H:%M') for t in plan['tasks']]==['08:00','12:00','18:00']
+    assert len(api.get('/api/tasks').json())==1
+
+@pytest.mark.parametrize('source',[
+ 'В пятницу поставь этой задаче время на 10:00.',
+ 'В пятницу перенеси работу на 10:00 и добавь встречу в 12:00.',
+ 'Можешь в пятницу поставить созвон на 10:00?',
+ 'Добавь в описание в пятницу в 10:00.',
+])
+def test_explicit_create_does_not_steal_management_or_questions(source):
+    from app.commands.matching import explicit_scheduled_creation
+    assert not explicit_scheduled_creation(source)

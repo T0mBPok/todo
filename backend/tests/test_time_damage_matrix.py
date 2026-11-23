@@ -54,3 +54,9 @@ def test_ai_rewrite_cannot_clear_ambiguous_original_clock(damaged):
 ])
 def test_combined_damage(source,expected):
     assert normalize_clock_minutes(source)==expected
+
+@pytest.mark.parametrize('hour',range(24))
+@pytest.mark.parametrize('minute',range(60))
+def test_repeated_minutes_and_damaged_daypart(hour,minute):
+    assert normalize_clock_minutes(f'{hour:02d}:{minute:02d} {minute:02d}')==f'{hour:02d}:{minute:02d}'
+    assert normalize_clock_minutes(f'{hour:02d}:{minute:02d} 0ня')==f'{hour:02d}:{minute:02d} дня'

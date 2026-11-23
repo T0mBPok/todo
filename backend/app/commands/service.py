@@ -8,7 +8,7 @@ from app.commands.models import Command
 from app.commands.dao import CommandDAO
 from app.commands.calendar_clear import ENTITY as CALENDAR_CLEAR, is_calendar_clear, prepare_clear
 from app.commands.ai import interpret
-from app.commands.matching import declarative_calendar_add, deletion_request, exact_title, explicit_calendar_add, score_name, timed_creation, timed_deletion, tokens
+from app.commands.matching import declarative_calendar_add, deletion_request, exact_title, explicit_calendar_add, explicit_scheduled_creation, score_name, timed_creation, timed_deletion, tokens
 from app.commands.recurrence import existing_recurrence
 from app.tasks.models import Task
 from app.tasks.schemas import TaskRead,TaskInput
@@ -97,7 +97,8 @@ class CommandService:
         else:
             if config.AI_PROVIDER == 'gigachat':
                 normalized_command, _ = AIPlanner().normalize(normalized_command)
-            if (len(request.text) > 750 and explicit_calendar_add(request.text)
+            if (explicit_scheduled_creation(request.text)
+                    or len(request.text) > 750 and explicit_calendar_add(request.text)
                     or not request.context_task_id and declarative_calendar_add(normalized_command)):
                 decision = Decision(intent='create', note='')
             else:

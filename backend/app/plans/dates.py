@@ -48,6 +48,9 @@ DAYPART_TOKENS = '|'.join(sorted(DAYPART_ALIASES,key=len,reverse=True))
 
 
 def normalize_clock_minutes(text):
+    # Repeated minute digits and a damaged day-part token are common ASR output.
+    text = re.sub(r'(?<![\d:])((?:[01]?\d|2[0-3]):([0-5]\d))\s+\2(?![\d:])',r'\1',text)
+    text = re.sub(r'(?<![\d:])((?:[01]?\d|2[0-3]):[0-5]\d)\s+0ня\b',r'\1 дня',text,flags=re.I)
     # Colons identify a clock without guessing whether a dotted number is a date.
     text = re.sub(r'(?<![\d:])([01]?\d|2[0-3])\s*(?:\s*:\s*){1,3}([0-5]?\d)(?![\d:])',
                   lambda m: f'{int(m[1]):02d}:{int(m[2]):02d}',text)

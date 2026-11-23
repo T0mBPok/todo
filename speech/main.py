@@ -11,7 +11,7 @@ import torch
 import gigaam
 from fastapi import FastAPI, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
-from audio import split_audio, SAMPLE_RATE
+from audio import split_audio, trim_silence, SAMPLE_RATE
 
 torch.set_num_threads(4)
 model=None
@@ -50,14 +50,23 @@ def recognize(data):
             raise HTTPException(422,'Максимальная длительность записи — 90 секунд.')
         if not len(audio) or np.max(np.abs(audio))<0.001:
             raise HTTPException(422,'Запись слишком тихая или пустая. Проверьте микрофон.')
+        decoded_at=perf_counter()
+        audio_seconds=len(audio)/SAMPLE_RATE
+        audio=trim_silence(audio)
+        prepared_at=perf_counter()
+        processed_seconds=len(audio)/SAMPLE_RATE
         texts=[]
+        chunk_count=0
+        queued_at=perf_counter()
         try:
             with lock, torch.inference_mode():
+                inference_at=perf_counter()
                 for index,chunk in enumerate(split_audio(audio)):
                     if np.max(np.abs(chunk))<0.001:
                         continue
                     path=Path(directory)/f'chunk-{index}.wav'
                     sf.write(path,chunk,SAMPLE_RATE,subtype='PCM_16')
+                    chunk_count+=1
                     result=model.transcribe(str(path))
                     text=result.text if hasattr(result,'text') else str(result)
                     if text.strip():
@@ -65,6 +74,11 @@ def recognize(data):
         except Exception as error:
             logging.getLogger(__name__).exception('GigaAM transcription failed')
             raise HTTPException(503,'GigaAM не смогла обработать запись.') from error
+    finished=perf_counter()
+    logging.getLogger('uvicorn.error').info(
+        'speech_timing audio_s=%.2f processed_s=%.2f decode_ms=%.0f prepare_ms=%.0f queue_ms=%.0f inference_ms=%.0f chunks=%d total_ms=%.0f',
+        audio_seconds,processed_seconds,(decoded_at-started)*1000,(prepared_at-decoded_at)*1000,
+        (inference_at-queued_at)*1000,(finished-inference_at)*1000,chunk_count,(finished-started)*1000)
     text=' '.join(texts).strip()
     if not text:
         raise HTTPException(422,'Речь не обнаружена. Повторите запись.')
