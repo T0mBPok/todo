@@ -19,6 +19,7 @@ def words(value):
 from app.plans.schemas import PlanOutput, PlanRead, PlanRequest
 from app.core import config
 from app.plans.ai import AIPlanner
+from app.plans.transcript_guard import display_transcript
 from app.plans.service import PlanService
 from app.recurrences.service import instances
 def anchor(value,today):
@@ -115,6 +116,7 @@ class CommandService:
             value=PlanRead.model_validate(plan)
             marker=' Нормализованный текст: '
             value.normalized_text=plan.note.split(marker,1)[1].split(' Без указанной длительности',1)[0] if marker in plan.note else request.text
+            value.normalized_text=display_transcript(value.normalized_text)
             return {'kind':'plan','plan':value}
         if time_reviews:
             raise HTTPException(422, time_reviews[0].message)
@@ -187,6 +189,7 @@ class CommandService:
             value=PlanRead.model_validate(plan)
             marker=' Нормализованный текст: '
             value.normalized_text=plan.note.split(marker,1)[1].split(' Без указанной длительности',1)[0] if marker in plan.note else request.text
+            value.normalized_text=display_transcript(value.normalized_text)
             return {'kind':'plan','plan':value}
         if not parsed.operations: raise HTTPException(422,'Назовите задачу и что нужно изменить.')
         zone=ZoneInfo(request.timezone);now=datetime.now(zone);today=now.date()

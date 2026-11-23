@@ -6,5 +6,6 @@ class Transcript(BaseModel):
     seconds: float = 0
     warning: str = ''
     raw_text: str = ''
+    command_text: str = ''
     postprocessed: bool = False
     cleanup_seconds: float = 0

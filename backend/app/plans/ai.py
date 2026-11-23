@@ -10,7 +10,7 @@ from app.core import config
 from app.core.request_logging import log_result_rejection
 from app.plans.schemas import PlanCheck, PlanOutput
 from app.plans.review import build_review
-from app.plans.transcript_guard import safe_transcript_edit
+from app.plans.transcript_guard import safe_transcript_edit, display_transcript, explicit_clock_text
 from app.plans.colloquial_time import resolve_colloquial_ranges
 from app.tasks.schemas import TaskInput
 from app.plans.dates import ANCHOR, TIME_RANGE, enforce_date_context, enforce_spoken_time, spoken_slots, words
@@ -59,7 +59,7 @@ class AIPlanner:
         response = ai_post(config.OLLAMA_BASE_URL + '/api/chat', timeout=120, operation='transcript_normalization',
             json={'model':config.OLLAMA_MODEL, 'stream':False, 'think':False, 'keep_alive':'10m',
                   'format':schema, 'options':{'temperature':0,'num_ctx':8192,'num_predict':1800},
-                  'messages':[{'role':'system','content':normalization_prompt()}, {'role':'user','content':original}]})
+                  'messages':[{'role':'system','content':normalization_prompt()}, {'role':'user','content':explicit_clock_text(original)}]})
         response.raise_for_status()
         data = response.json()
         if data.get('done_reason') == 'length':
@@ -99,7 +99,7 @@ class AIPlanner:
                 normalized = request._normalized_text
             else:
                 normalized, _ = self.normalize(spoken if spoken != original else request.text)
-            planner_text = normalized + '\nИсходный текст (сохрани все детали для описания): ' + original
+            planner_text = normalized + '\nИсходный текст (сохрани все детали для описания): ' + explicit_clock_text(original)
             if spoken != original and spoken != normalized:
                 planner_text += '\nУказанное местное время: ' + spoken
             if request._normalized_text is not None and request.text not in {normalized, original}:
@@ -164,12 +164,13 @@ class AIPlanner:
             note = 'Понял: ' + summary + '.'
             if any(task.recurrence for task in parsed.tasks):
                 note += ' Повторяющиеся события продолжаются без даты окончания.'
+            display_normalized=display_transcript(normalized)
             if normalized != original:
-                note += ' Нормализованный текст: ' + normalized
+                note += ' Нормализованный текст: ' + display_normalized
             if not duration_mentioned:
                 note += ' Без указанной длительности — 60 минут; для связанных задач «сразу после» конец взят из начала следующей.'
             review = build_review(parsed.tasks, model_reasons, time_reviews, original, request.timezone)
-            return PlanOutput(tasks=parsed.tasks, note=note, normalized_text=normalized, review=review)
+            return PlanOutput(tasks=parsed.tasks, note=note, normalized_text=display_normalized, review=review)
 
         except httpx.TimeoutException as error:
             raise HTTPException(504, 'Qwen не ответила вовремя. Попробуйте ещё раз или сократите запрос.') from error

@@ -48,3 +48,12 @@ def test_cleanup_accepts_safe_clock_artifact_repair(monkeypatch):
     result = polish_transcript({'text': raw})
     assert result['text'] == 'В пятницу 27-го числа с 10:00 утра до 03:00 дня пары по ТСП.'
     assert result['raw_text'] == raw
+
+
+def test_clock_debris_is_hidden_but_preserved_for_interpretation_when_ai_is_offline(monkeypatch):
+    def offline(self,text):raise RuntimeError('offline')
+    monkeypatch.setattr(AIPlanner,'normalize',offline)
+    raw='Пары с 12:00 0н до 13:00 дня. Встреча с 18:00 до 19:00 в0ра. Созвон в 06:00 в0ра.'
+    result=polish_transcript({'text':raw})
+    assert result['text']=='Пары с 12:00 до 13:00 дня. Встреча с 18:00 до 19:00. Созвон в 06:00.'
+    assert result['raw_text']==result['command_text']==raw

@@ -6,17 +6,18 @@ const component=await readFile(new URL('../src/CalendarApp.vue',import.meta.url)
 const script=component.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm,'')
 function setup({response,error,confirmError,voiceFactory}={}) {
   let callbacks, toggles=0,cancels=0,confirms=0,requests=0
+  const payloads=[]
   const ref=value=>({value}), computed=get=>({get value(){return get()}})
   const hook={supported:true,listening:ref(false),processing:ref(false),starting:ref(false),audioUrl:ref(''),rawTranscript:ref(''),engineName:ref(''),elapsed:ref(0),recordSeconds:ref(0),toggle:async()=>{toggles++;hook.listening.value=!hook.listening.value},cancel:()=>{cancels++;hook.listening.value=false}}
   const deps={errorMessage,defineProps:()=>({refreshToken:0}),ref,computed,watch:()=>{},nextTick:async()=>{},onMounted:()=>{},window:{innerWidth:1280},
     useVoiceInput:options=>{callbacks=options;return voiceFactory ? voiceFactory(options) : hook},
-    request:async path=>{if(path==='/todos')return [];requests++;if(error)throw Error(error);return path.endsWith('/execute')?{note:'Готово',tasks:[]}:path.endsWith('/clear-calendar')?{note:'Календарь очищен.'}:typeof response === 'function' ? response(requests) : response},
+    request:async (path,method,payload)=>{if(path==='/todos')return [];if(path==='/commands')payloads.push(payload);requests++;if(error)throw Error(error);return path.endsWith('/execute')?{note:'Готово',tasks:[]}:path.endsWith('/clear-calendar')?{note:'Календарь очищен.'}:typeof response === 'function' ? response(requests) : response},
     listTasks:async()=>[],visibleRange:()=>({}),localDate:value=>new Date(value).toISOString().slice(0,16),
     dateKey:()=>'',fromKey:()=>new Date(),monthDays:()=>[],
     confirmPlan:async()=>{confirms++;if(confirmError)throw Error(confirmError);return [{id:'saved',start:'2026-10-20T18:00:00Z'}]}}
   const expose='return {quickMic,cancelQuick,voiceOpen,quickMode,text,message,command,plan,autoSave,busy,generate,planEditor,clearCalendarDraft,confirmCalendarClear,choices,excludeDeletion}'
   const app=new Function(...Object.keys(deps),script+'\n'+expose)(...Object.values(deps))
-  return {app,hook,status:()=>({toggles,cancels,confirms,requests}),async finish(text){hook.listening.value=false;hook.rawTranscript.value=text;app.text.value=text;await callbacks.onComplete()},async transcribe(corrected,raw=corrected){hook.listening.value=false;hook.rawTranscript.value=raw;app.text.value=corrected;await callbacks.onComplete()},fail:value=>callbacks.onError(value)}
+  return {app,hook,payloads,status:()=>({toggles,cancels,confirms,requests}),async finish(text){hook.listening.value=false;hook.rawTranscript.value=text;app.text.value=text;await callbacks.onComplete()},async transcribe(corrected,raw=corrected,commandText){hook.listening.value=false;hook.rawTranscript.value=raw;app.text.value=corrected;await callbacks.onComplete({commandText})},fail:value=>callbacks.onError(value)}
 }
 test('quick recording starts immediately without opening the panel, second click stops it',async()=>{
   const {app,hook,status}=setup();await app.quickMic()
@@ -214,4 +215,18 @@ test('real recorder completion automatically transcribes, prepares and saves wit
    if(oldNavigator)Object.defineProperty(globalThis,'navigator',oldNavigator);else delete globalThis.navigator
    globalThis.window=oldWindow;globalThis.MediaRecorder=oldRecorder;globalThis.fetch=oldFetch
  }
+})
+
+
+test('clean speech is displayed while unresolved source remains available to the command parser',async()=>{
+ const clean='Пары с 12:00 до 13:00 дня.'
+ const raw='Пары с 12:00 0н до 13:00 дня.'
+ const s=setup({response:{kind:'plan',plan:{id:'plan',tasks:[{start:'2026-11-27T05:00:00Z'}],normalized_text:clean,review:[]}}})
+ await s.transcribe(clean,raw,raw)
+ assert.equal(s.payloads[0].text,raw)
+ assert.equal(s.app.text.value,clean)
+ assert.equal(s.status().confirms,1)
+ s.app.text.value='Пары с 14:00 до 15:00.'
+ await s.app.generate(false)
+ assert.equal(s.payloads[1].text,'Пары с 14:00 до 15:00.')
 })

@@ -35,7 +35,7 @@ export function useVoiceInput({ text, onComplete, onError }) {
       // Each recording is a complete command or answer, never an implicit append.
       text.value = result.text.trim().slice(0,6000)
       processing.value = false
-      await onComplete()
+      await onComplete({ commandText: result.command_text || result.text })
     } catch (error) {
       if (!disposed && !cancelled) onError(error.name === 'TypeError' ? 'Нет связи с сервером распознавания. Попробуйте ещё раз.' : errorMessage(error))
     } finally { processing.value = false }

@@ -97,6 +97,9 @@ def polish_transcript(result):
         log_result_rejection('speech_cleanup', 'cleanup_failed', error)
         previous=result.get('warning','')
         result['warning']=(previous+' Не удалось улучшить расшифровку. Показан исходный текст.').strip()
+    from app.plans.transcript_guard import display_transcript
+    result['command_text']=result['text']
+    result['text']=display_transcript(result['text'])
     result['cleanup_seconds']=round(perf_counter()-started,2)
     return result
 

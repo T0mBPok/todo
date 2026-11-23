@@ -115,7 +115,8 @@ def normalize_clock_dayparts(text):
 
 
 def spoken_slots(text):
-    for sentence in SENTENCE_BREAK.split(normalize_clock_dayparts(text)):
+    from app.plans.transcript_guard import explicit_clock_text
+    for sentence in SENTENCE_BREAK.split(normalize_clock_dayparts(explicit_clock_text(text))):
         sentence = DETAIL_MARKER.split(sentence, maxsplit=1)[0]
         clock_count = len(re.findall(CLOCK, sentence))
         if clock_count > 1 and re.search(r'\b(?:ой[,\s]+нет|точнее|пардон)\b', sentence, re.I):

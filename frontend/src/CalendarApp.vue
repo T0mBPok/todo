@@ -68,13 +68,13 @@ function createCalendarEvent() {
 function closeVoice() { quickMode.value=true; voiceOpen.value=false }
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
 const { supported, listening, processing, starting, toggle, cancel, audioUrl, rawTranscript, engineName, elapsed, recordSeconds } = useVoiceInput({ text, onComplete: transcriptReady, onError: showVoiceError })
-async function transcriptReady() {
+async function transcriptReady({ commandText } = {}) {
   lastTranscript.value = rawTranscript.value
   normalizedText.value = text.value
   assistantTab.value = 'voice'
   voiceOpen.value = true
   quickMode.value = false
-  await generate(true)
+  await generate(true, commandText)
 }
 function showVoiceError(value) { message.value=value; assistantTab.value='voice'; voiceOpen.value=true }
 async function quickMic() {
@@ -151,9 +151,9 @@ async function confirmCalendarClear() {
   }
 }
 
-async function generate(fromVoice = false) {
+async function generate(fromVoice = false, voiceCommand = '') {
   if(busy.value || !text.value.trim()) return
-  const utterance=text.value.trim(), lower=utterance.toLowerCase()
+  const utterance=(fromVoice && voiceCommand ? voiceCommand : text.value).trim(), lower=utterance.toLowerCase()
   lastTranscript.value=fromVoice?rawTranscript.value:utterance
   if (clearCalendarDraft.value) {
     if (/^(отмена|отмени|не надо)[.! ]*$/.test(lower)) {
