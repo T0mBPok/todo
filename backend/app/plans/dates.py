@@ -155,7 +155,7 @@ def enforce_spoken_time(tasks, text, timezone_name, *alternatives):
                     re.search(r'(?<![\d:])\d{1,2}[./]\d{1,2}(?!\d)',clause)
                     or re.search(r'\b\d{1,2}:([6-9]\d|\d{3,})(?!\d)',clause)
                     or re.search(r'\b(?:2[4-9]|[3-9]\d):\d',clause)
-                    or re.search(r'\b\d{1,2}:\d{2}:\d',clause)
+                    or re.search(r'\b\d{1,2}:\d{1,2}:\d',clause)
                     or re.search(rf'({CLOCK})[а-яё]+\b',clause,re.I)
                 ):ambiguous_original.add(index)
         if len(slots) == len(tasks) and fully_timed is None:

@@ -41,7 +41,7 @@ def test_range_families(source,expected):
 def test_quantities_versions_and_dates_are_preserved(source):
     assert normalize_clock_minutes(source)==source
 
-@pytest.mark.parametrize('damaged',['12:77','12.05','12/05','12:00абра','24:00','29:10','12:05:30'])
+@pytest.mark.parametrize('damaged',['12:77','12.05','12/05','12:00абра','24:00','29:10','12:05:30','12:0:00'])
 def test_ai_rewrite_cannot_clear_ambiguous_original_clock(damaged):
     task=TaskInput(title='Тренировка',start='2026-11-27T19:00:00+07:00',end='2026-11-27T20:00:00+07:00')
     unresolved=enforce_spoken_time([task],f'Тренировка в {damaged}.','Asia/Tomsk','Тренировка в 12:05.')
