@@ -1,7 +1,6 @@
 from app.core.ai_client import ai_post
 import json
 import re
-from collections import Counter
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import httpx
@@ -11,6 +10,7 @@ from app.core import config
 from app.core.request_logging import log_result_rejection
 from app.plans.schemas import PlanCheck, PlanOutput
 from app.plans.review import build_review
+from app.plans.transcript_guard import safe_transcript_edit
 from app.plans.colloquial_time import resolve_colloquial_ranges
 from app.tasks.schemas import TaskInput
 from app.plans.dates import ANCHOR, TIME_RANGE, enforce_date_context, enforce_spoken_time, spoken_slots, words
@@ -73,12 +73,9 @@ class AIPlanner:
             log_result_rejection('transcript_normalization', 'invalid_text_field')
             return original, ''
         normalized = normalize_transcript(normalized.strip())
-        # A language correction must never silently change explicit numeric times.
-        times = lambda value: Counter(re.findall(r'(?<!\d)\d{1,2}:\d{2}(?!\d)', value))
-        numbers = lambda value: Counter(re.findall(r'\d+', value))
-        anchors = lambda value: Counter(match.group().casefold() for match in ANCHOR.finditer(value))
-        if (times(original) - times(normalized) or numbers(original) != numbers(normalized)
-                or anchors(original) != anchors(normalized)):
+        # Accept semantic wording repairs without enumerating every ASR typo.
+        # Numeric clocks, dates and their order remain protected independently.
+        if not safe_transcript_edit(original, normalized):
             log_result_rejection('transcript_normalization', 'temporal_anchors_changed')
             return original, ''
         details=re.search(r'(?:в\s+описании|описание(?:\s+задачи)?|детали)\s*[:—-]\s*(.+)',original,re.I|re.S)
@@ -117,7 +114,11 @@ class AIPlanner:
             data = response.json()
             if data.get('done_reason') == 'length':
                 raise HTTPException(502, 'План слишком большой. Разделите запрос на несколько частей.')
-            parsed = parse_plan(data['message']['content'], spoken, request.timezone)
+            # The accepted edit becomes the canonical wording, not a competing
+            # clock source that can be overridden by broken ASR fragments.
+            clock_source = normalized if safe_transcript_edit(normalize_transcript(spoken), normalized) else spoken
+            clock_source = resolve_colloquial_ranges(clock_source, request.timezone)
+            parsed = parse_plan(data['message']['content'], clock_source, request.timezone)
             if not parsed.tasks:
                 raise HTTPException(422, parsed.note or 'Уточните день, время и задачу.')
             model_reasons = {parsed.tasks[item.task_index].title: item.reason for item in parsed.review
@@ -144,7 +145,7 @@ class AIPlanner:
             # Collapse model-expanded repetitions before matching one spoken slot
             # to one series. Otherwise duplicate titles bypass time correction.
             parsed.tasks = apply_spoken_recurrence(parsed.tasks, request.text, request.timezone)
-            unresolved = enforce_spoken_time(parsed.tasks, normalize_transcript(spoken), request.timezone, normalized, request.text)
+            unresolved = enforce_spoken_time(parsed.tasks, normalize_transcript(clock_source), request.timezone)
             for index in unresolved:
                 model_reasons.setdefault(parsed.tasks[index].title, 'Не удалось сверить время события с диктовкой.')
             # Linked events share a boundary after their spoken times have been applied.
