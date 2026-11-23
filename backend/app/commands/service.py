@@ -49,11 +49,11 @@ class CommandService:
         from app.commands.grounded_ai import Decision, SelectedOperation, interpret_calendar
         from app.commands.schemas import Operation
         from app.plans.colloquial_time import resolve_colloquial_ranges
-        from app.plans.dates import ANCHOR
+        from app.plans.dates import ANCHOR, canonical_date_anchors
 
         zone = ZoneInfo(request.timezone)
         today = datetime.now(zone).date()
-        explicit_days = {anchor(match.group(), today) for match in ANCHOR.finditer(request.text)}
+        explicit_days = {anchor(match.group(), today) for match in ANCHOR.finditer(canonical_date_anchors(request.text,today))}
         from app.plans.prompts import normalize_transcript
         time_reviews = []
         normalized_command = normalize_transcript(

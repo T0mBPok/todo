@@ -31,6 +31,22 @@ def explicit_weekday_date(tail, today):
             raise HTTPException(422, 'Уточните месяц для указанного числа.') from error
     return target, match.end()
 
+ORDINAL_DATE = re.compile(
+    r'(?<![\w:–-])\d{1,2}(?:\s*[-–‑]\s*(?:ого|ое|го|е)(?:\s+числ[оа])?|\s+числ[оа]|\s+(?:'
+    + '|'.join(MONTHS) + r'))(?:\s+(?:' + '|'.join(MONTHS) + r'))?(?:\s+\d{4}(?:\s*года)?)?(?![\w:])', re.I)
+
+
+def canonical_date_anchors(text, today):
+    """Turn an explicit calendar day into an ISO anchor without asking the LLM."""
+    def replace(match):
+        prefix=text[max(0,match.start()-30):match.start()]
+        if re.search(r'(?:'+'|'.join(stem+r'[а-яё]*' for stem in WEEKDAYS)+r')\s*$',prefix,re.I):
+            return match[0]  # weekday + explicit day is already handled together
+        target,_=explicit_weekday_date(match[0].replace('‑','-'),today)
+        return target.isoformat() if target else match[0]
+    return ORDINAL_DATE.sub(replace,text)
+
+
 CLOCK = r'(?<![\d:])(?:[01]?\d|2[0-3]):[0-5]\d(?![\d:])'
 TIME_RANGE = re.compile(rf'\b(?:с\s+)?({CLOCK})(?:\s+до\s+|\s*[-–—]\s*)({CLOCK})', re.I)
 START_TIME = re.compile(rf'\b(?:в|во|на|к)\s+({CLOCK})', re.I)
@@ -51,6 +67,7 @@ def normalize_clock_minutes(text):
     # Zero seconds add no information to minute-precision calendar intervals.
     text = re.sub(r'(?<![\d:])([01]?\d|2[0-3]):([0-5]?\d):0{1,2}(?![\d:])',
                   lambda m:f'{int(m[1]):02d}:{int(m[2]):02d}',text)
+    text = re.sub(r'\b(с\s+)([1-9])0(?=\s+до\s+(?:[01]?\d|2[0-3]):[0-5]\d)',r'\g<1>0\2:00',text,flags=re.I)
     # Repeated minute digits and a damaged day-part token are common ASR output.
     text = re.sub(r'(?<![\d:])((?:[01]?\d|2[0-3]):([0-5]\d))\s+\2(?![\d:])',r'\1',text)
     text = re.sub(r'(?<![\d:])((?:[01]?\d|2[0-3]):[0-5]\d)\s+0ня\b',r'\1 дня',text,flags=re.I)
@@ -126,7 +143,22 @@ def spoken_slots(text):
             continue
         single_slot_size = 2 if TIME_RANGE.search(sentence) else 1
         clauses = CLAUSE_BREAK.split(sentence) if clock_count > single_slot_size else [sentence]
+        fragments=[]
         for clause in clauses:
+            intervals=list(TIME_RANGE.finditer(clause))
+            if len(intervals)>1 and len(re.findall(CLOCK,clause))==2*len(intervals):
+                # Lists need not have punctuation between adjacent events.
+                # Detect whether names precede or follow the first interval.
+                prefix=ORDINAL_DATE.sub(' ',ANCHOR.sub(' ',clause[:intervals[0].start()]))
+                prefix=re.sub(r'\b(?:постав[а-яё]*|став[а-яё]*|добав[а-яё]*|запланиру[а-яё]*|пожалуйста|мне|меня|числ[а-яё]*|на|в|с|кажд[а-яё]*)\b|\d+',' ',prefix,flags=re.I)
+                names_before=bool(words(prefix))
+                for i,interval in enumerate(intervals):
+                    left=intervals[i-1].end() if names_before and i else interval.start() if i else 0
+                    right=interval.end() if names_before else intervals[i+1].start() if i+1<len(intervals) else len(clause)
+                    fragments.append(clause[left:right])
+            else:
+                fragments.append(clause)
+        for clause in fragments:
             clocks = re.findall(CLOCK, clause)
             interval = TIME_RANGE.search(clause) if len(clocks) == 2 else None
             start = START_TIME.search(clause) if len(clocks) == 1 else None
@@ -231,6 +263,7 @@ def words(text):
 def enforce_date_context(tasks, text, timezone, now=None):
     zone=ZoneInfo(timezone)
     today=(now or datetime.now(zone)).astimezone(zone).date()
+    text=canonical_date_anchors(text,today)
     anchors=list(ANCHOR.finditer(text))
     if not anchors:
         return tasks

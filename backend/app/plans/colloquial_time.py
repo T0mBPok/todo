@@ -25,7 +25,7 @@ NUMBER = r'(?:[01]?\d|2[0-3])(?::[0-5]?\d)?(?![\d:]|\.\d)'
 POINT = rf'(?:{NUMBER}|(?:{HOUR_WORD})(?:\s+(?:{MINUTE_WORD}))?)(?:\s+час(?:а|ов)?)?(?:\s+(?:{DAY_PART}))?'
 RANGE = re.compile(rf'\bс\s+({POINT})\s+до\s+({POINT})\b', re.I)
 CLAUSE_BOUNDARY = re.compile(r',(?!\d)|\b(?:потом|затем|а\s+ещ[её]|и\s+ещ[её])\b', re.I)
-DAY_SHIFT = re.compile(r'\b(?:работ[ауые]|рабоч\w*\s+день|смен[ауые])\b', re.I)
+DAY_SHIFT = re.compile(r'\b(?:работ[ауые]|рабоч\w*\s+день|смен[ауые]|пар[ыауе])\b', re.I)
 NIGHT = re.compile(r'\b(?:ноч\w*|вечерн\w*)\b', re.I)
 DATE_OR_UNIT = re.compile(r'\s+(?:' + '|'.join(MONTHS) + r'|числа|минут|секунд|дней|лет|рублей)\b', re.I)
 END_ONLY = re.compile(rf'\bдо\s+({CLOCK})', re.I)
@@ -100,7 +100,12 @@ def resolve_colloquial_ranges(text, timezone_name, *, now=None, reviews=None):
         for match in ranges:
             if DATE_OR_UNIT.match(sentence[match.end():]):
                 continue
+            clause = clauses_around(sentence, match)
             if all(re.fullmatch(r'\d{1,2}:[0-5]?\d', point) for point in match.groups()):
+                first,last=[int(p.split(':')[0]) for p in match.groups()]
+                if first==12 and 0<last<12 and DAY_SHIFT.search(clause) and not NIGHT.search(clause):
+                    end_hour,end_minute=map(int,match[2].split(':'))
+                    edits.append((left+match.start(),left+match.end(),f'с {match[1]} до {end_hour+12:02d}:{end_minute:02d}'))
                 continue
             starts, ends = map(possible_minutes, match.groups())
             if len(starts) == len(ends) == 1:

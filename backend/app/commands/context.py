@@ -2,7 +2,7 @@ from datetime import datetime,timedelta
 import re
 from zoneinfo import ZoneInfo
 from fastapi import HTTPException
-from app.plans.dates import ANCHOR,resolve_anchor
+from app.plans.dates import ANCHOR,resolve_anchor,canonical_date_anchors
 from app.plans.prompts import date_context
 from app.tasks.schemas import TaskRead
 from app.recurrences.service import instances, next_occurrence
@@ -50,7 +50,7 @@ def calendar_context(request,service):
             raise HTTPException(422,'Выберите диапазон календаря не более двух месяцев.')
         windows.append((request.calendar_start,request.calendar_end))
     explicit_windows=[]
-    for match in ANCHOR.finditer(request.text):
+    for match in ANCHOR.finditer(canonical_date_anchors(request.text,now.date())):
         day=resolve_anchor(match.group(),now.date())
         if day:
             start=datetime.combine(day,datetime.min.time(),zone);explicit_windows.append((start,start+timedelta(days=1)))

@@ -368,3 +368,38 @@ def test_one_invalid_interval_does_not_flag_other_events_in_same_sentence():
     tasks=[TaskInput(title='Работа',start='2026-11-27T08:00:00+07:00',end='2026-11-27T09:00:00+07:00'),
            TaskInput(title='Пары',start='2026-11-27T19:00:00+07:00',end='2026-11-27T20:00:00+07:00')]
     assert enforce_spoken_time(tasks,'с 08:00 до 09:00 работа, с 12:77 до 13:00 пары.','Asia/Tomsk')=={1}
+
+
+@pytest.mark.parametrize(('source','expected'),[
+ ('На 27-е число поставь с 08:00 утра до 09:00 утра работу с 12:00 до 01:00 я пары, и с 06:00 вечера до 7 вечера встречу с друзьями.',{'Работа':('08:00','09:00'),'Пары':('12:00','13:00'),'Встреча с друзьями':('18:00','19:00')}),
+ ('На 27-е число став с 80 до 09:00 работал.',{'Работа':('08:00','09:00')}),
+ ('На 27-е число поставь работу с 08:00 до 09:00 пары с 12:00 до 13:00 встречу с друзьями с 18:00 до 19:00.',{'Работа':('08:00','09:00'),'Пары':('12:00','13:00'),'Встреча с друзьями':('18:00','19:00')}),
+])
+def test_real_ordinal_day_commands_in_calendar_with_over_180_events(client,monkeypatch,source,expected):
+    from app.tasks.models import Task
+    api,session=client
+    # Existing events really exceed the old interpreter limit. They are not mocks.
+    base=datetime(2098,1,1,tzinfo=ZoneInfo('Asia/Tomsk'))
+    for i in range(185):
+        start=base+timedelta(days=i)
+        session.add(Task(title=f'Существующее событие {i}',start=start,end=start+timedelta(hours=1)))
+    session.commit()
+    monkeypatch.setattr(ai.config,'AI_PROVIDER','gigachat')
+    monkeypatch.setattr(ai.AIPlanner,'normalize',lambda self,text:(text,''))
+    def no_context(*a):raise AssertionError('Creation must never expand the existing event context')
+    import app.commands.context as context
+    monkeypatch.setattr(context,'calendar_context',no_context)
+    tasks=[{'title':title,'start':'2026-11-26T01:00:00Z','end':'2026-11-26T02:00:00Z'} for title in expected]
+    result=ai.ExtractedPlan(tasks=tasks,note='',needs_clarification=False)
+    monkeypatch.setattr(ai,'ai_post',lambda url,**kw:httpx.Response(200,request=httpx.Request('POST',url),json={'message':{'content':result.model_dump_json()}}))
+    response=api.post('/api/commands',json={'text':source,'timezone':'Asia/Tomsk'})
+    assert response.status_code==200,response.text
+    draft=response.json()['plan']
+    assert not draft['review'],draft
+    saved=api.post('/api/plans/'+draft['id']+'/confirm',json={'tasks':draft['tasks']})
+    assert saved.status_code==200,saved.text
+    assert len(api.get('/api/tasks').json())==185+len(expected)
+    for event in saved.json():
+        times=[datetime.fromisoformat(event[k]).astimezone(ZoneInfo('Asia/Tomsk')) for k in ('start','end')]
+        assert tuple(t.strftime('%H:%M') for t in times)==expected[event['title']]
+        assert all(t.date().isoformat()=='2026-11-27' for t in times)

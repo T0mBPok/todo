@@ -100,10 +100,10 @@ def explicit_calendar_add(text):
 
 
 def explicit_scheduled_creation(text):
-    """An explicit dated add must not mutate a previously selected event."""
+    """An explicit add must not mutate a previously selected event."""
     return bool(
-        re.search(r'\b(?:поставь|добавь|запланируй|внеси|создай|запиши)(?:те)?\b', text, re.I)
-        and ANCHOR.search(text) and re.search(CLOCK, normalize_clock_minutes(text))
+        re.search(r'\b(?:поставь|ставь|став|добавь|запланируй|внеси|создай|запиши)(?:те)?\b', text, re.I)
+        and re.search(CLOCK, normalize_clock_minutes(text))
         and not CHANGES_EXISTING.search(text)
         and not re.search(r'\b(?:эту?|это|его|е[её]|этому|этой|длительность|описание)\b|[?]',text,re.I)
     )

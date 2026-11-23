@@ -13,7 +13,7 @@ from app.plans.review import build_review
 from app.plans.transcript_guard import safe_transcript_edit, display_transcript, explicit_clock_text
 from app.plans.colloquial_time import resolve_colloquial_ranges
 from app.tasks.schemas import TaskInput
-from app.plans.dates import ANCHOR, TIME_RANGE, enforce_date_context, enforce_spoken_time, spoken_slots, words
+from app.plans.dates import ANCHOR, TIME_RANGE, enforce_date_context, enforce_spoken_time, spoken_slots, words, canonical_date_anchors
 from app.recurrences.speech import apply_spoken_recurrence
 from app.plans.prompts import planning_prompt, normalize_transcript, normalization_prompt
 
@@ -35,7 +35,7 @@ def parse_plan(content, spoken, timezone_name):
             except ValidationError as error:
                 # Repair only a fully spoken, uniquely matched interval with a
                 # date. Invalid model JSON must not become an invented schedule.
-                if not ANCHOR.search(spoken):continue
+                if not ANCHOR.search(canonical_date_anchors(spoken,datetime.now(ZoneInfo(timezone_name)).date())):continue
                 tokens=set(words(raw['title']))
                 scores=[len(tokens & set(words(clause))) for clause,_,_ in slots]
                 best=max(scores,default=0)
