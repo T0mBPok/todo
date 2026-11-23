@@ -87,7 +87,8 @@ def report_review(reviews, clause, reason, choices):
 
 
 def resolve_colloquial_ranges(text, timezone_name, *, now=None, reviews=None):
-    text = normalize_clock_minutes(text)
+    from app.plans.transcript_guard import explicit_clock_text
+    text = explicit_clock_text(normalize_clock_minutes(text))
     zone = ZoneInfo(timezone_name)
     current = (now or datetime.now(zone)).astimezone(zone)
     minute_now = current.hour * 60 + current.minute

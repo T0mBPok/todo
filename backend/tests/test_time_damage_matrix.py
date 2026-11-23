@@ -41,7 +41,7 @@ def test_range_families(source,expected):
 def test_quantities_versions_and_dates_are_preserved(source):
     assert normalize_clock_minutes(source)==source
 
-@pytest.mark.parametrize('damaged',['12:77','12.05','12/05','12:00абра','24:00','29:10','12:05:30','12:0:00'])
+@pytest.mark.parametrize('damaged',['12:77','12.05','12/05','12:00абра','24:00','29:10','12:05:30','12:0:30'])
 def test_ai_rewrite_cannot_clear_ambiguous_original_clock(damaged):
     task=TaskInput(title='Тренировка',start='2026-11-27T19:00:00+07:00',end='2026-11-27T20:00:00+07:00')
     unresolved=enforce_spoken_time([task],f'Тренировка в {damaged}.','Asia/Tomsk','Тренировка в 12:05.')
@@ -60,3 +60,8 @@ def test_combined_damage(source,expected):
 def test_repeated_minutes_and_damaged_daypart(hour,minute):
     assert normalize_clock_minutes(f'{hour:02d}:{minute:02d} {minute:02d}')==f'{hour:02d}:{minute:02d}'
     assert normalize_clock_minutes(f'{hour:02d}:{minute:02d} 0ня')==f'{hour:02d}:{minute:02d} дня'
+
+@pytest.mark.parametrize('source',['13:00:0','13:00:00','12:0:00','01:30:0','00:00:00','23:59:00'])
+def test_zero_seconds_are_removed_without_altering_minutes(source):
+    h,m,_=source.split(':')
+    assert normalize_clock_minutes(source)==f'{int(h):02d}:{int(m):02d}'

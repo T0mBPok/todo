@@ -48,6 +48,9 @@ DAYPART_TOKENS = '|'.join(sorted(DAYPART_ALIASES,key=len,reverse=True))
 
 
 def normalize_clock_minutes(text):
+    # Zero seconds add no information to minute-precision calendar intervals.
+    text = re.sub(r'(?<![\d:])([01]?\d|2[0-3]):([0-5]?\d):0{1,2}(?![\d:])',
+                  lambda m:f'{int(m[1]):02d}:{int(m[2]):02d}',text)
     # Repeated minute digits and a damaged day-part token are common ASR output.
     text = re.sub(r'(?<![\d:])((?:[01]?\d|2[0-3]):([0-5]\d))\s+\2(?![\d:])',r'\1',text)
     text = re.sub(r'(?<![\d:])((?:[01]?\d|2[0-3]):[0-5]\d)\s+0ня\b',r'\1 дня',text,flags=re.I)
@@ -143,7 +146,7 @@ def enforce_spoken_time(tasks, text, timezone_name, *alternatives):
         slots = list(spoken_slots(source))
         # A damaged explicit clock must trigger review, even when it yielded
         # no parseable slot and the model claims its answer is confident.
-        for clause in SENTENCE_BREAK.split(source):
+        for clause in re.split(r'\.(?!\d)|[!?;]|,\s*(?!\d)|\s+(?:и|потом|затем)\s+',source,flags=re.I):
             clause=DETAIL_MARKER.split(clause,maxsplit=1)[0]
             if not re.search(r'(?<!\d)\d{1,2}\s*[:./]',clause):continue
             tokens=set(words(clause))

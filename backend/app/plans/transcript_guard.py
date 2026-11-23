@@ -32,7 +32,9 @@ def explicit_clock_text(text):
     def replace(match):
         letters=match[2].replace('0','')
         hour=int(match[1].split(':')[0])
-        if hour >= 12 and not UNIT.match(letters):
+        tail=text[match.end():]
+        known_end=re.match(rf'\s+до\s+{CLOCK}\s+(?:утра|дня|вечера|ночи)\b',tail,re.I)
+        if (hour >= 12 or known_end) and not UNIT.match(letters):
             return match[1]
         return match[0]
     return CLOCK_RESIDUE.sub(replace,text)

@@ -327,3 +327,44 @@ def test_explicit_multi_create_ignores_selected_event_context(client,monkeypatch
 def test_explicit_create_does_not_steal_management_or_questions(source):
     from app.commands.matching import explicit_scheduled_creation
     assert not explicit_scheduled_creation(source)
+
+
+# Exact server-side text of the failed request, not only its cleaned UI version.
+PROD_TIME_FIRST='На пятницу 27-го числа, с 08:00 до 09:00 работа, с 12:00 дня до 13:00:0 — пары, с 06:00 в00 до 07:00 вечера встреча с друзьями.'
+
+@pytest.mark.parametrize('source',[
+ PROD_TIME_FIRST,
+ 'На пятницу 27-го числа работа с 08:00 до 09:00, пары с 12:00 дня до 13:00:0, встреча с друзьями с 06:00 в00 до 07:00 вечера.',
+ 'На пятницу 27-го числа: с 08:00 до 09:00 — работа; с 12:00 дня до 13:00:00 — пары; с 06:00 до 07:00 вечера — встреча с друзьями.',
+])
+@pytest.mark.parametrize('zone',['Asia/Tomsk','Europe/Moscow','America/New_York'])
+def test_real_production_time_first_request_survives_full_prepare_save_read(client,monkeypatch,source,zone):
+    api,_=client
+    monkeypatch.setattr(ai.config,'AI_PROVIDER','gigachat')
+    # The fallback must work even if transcript cleanup changes nothing.
+    monkeypatch.setattr(ai.AIPlanner,'normalize',lambda self,text:(text,''))
+    wrong=ai.ExtractedPlan(tasks=[
+      {'title':'Работа','start':'2026-11-27T08:00:00+07:00','end':'2026-11-27T09:00:00+07:00'},
+      {'title':'Пары','start':'2026-11-27T19:00:00+07:00','end':'2026-11-27T20:00:00+07:00'},
+      {'title':'Встреча с друзьями','start':'2026-11-27T01:00:00+07:00','end':'2026-11-27T02:00:00+07:00'}],note='',needs_clarification=False)
+    monkeypatch.setattr(ai,'ai_post',lambda url,**kw:httpx.Response(200,request=httpx.Request('POST',url),json={'message':{'content':wrong.model_dump_json()}}))
+    prepared=api.post('/api/commands',json={'text':source,'timezone':zone})
+    assert prepared.status_code==200,prepared.text
+    draft=prepared.json()['plan']
+    assert draft['review']==[],draft
+    saved=api.post('/api/plans/'+draft['id']+'/confirm',json={'tasks':draft['tasks']})
+    assert saved.status_code==200,saved.text
+    expected={'Работа':('08:00','09:00'),'Пары':('12:00','13:00'),'Встреча с друзьями':('18:00','19:00')}
+    for event in api.get('/api/tasks').json():
+        times=[datetime.fromisoformat(event[k]).astimezone(ZoneInfo(zone)) for k in ('start','end')]
+        assert tuple(t.strftime('%H:%M') for t in times)==expected[event['title']]
+        assert all(t.date().isoformat()=='2026-11-27' for t in times)
+
+
+
+def test_one_invalid_interval_does_not_flag_other_events_in_same_sentence():
+    from app.plans.dates import enforce_spoken_time
+    from app.tasks.schemas import TaskInput
+    tasks=[TaskInput(title='Работа',start='2026-11-27T08:00:00+07:00',end='2026-11-27T09:00:00+07:00'),
+           TaskInput(title='Пары',start='2026-11-27T19:00:00+07:00',end='2026-11-27T20:00:00+07:00')]
+    assert enforce_spoken_time(tasks,'с 08:00 до 09:00 работа, с 12:77 до 13:00 пары.','Asia/Tomsk')=={1}
