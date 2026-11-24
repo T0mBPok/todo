@@ -69,6 +69,10 @@ def test_oauth_binding_and_bidirectional_exchange(monkeypatch):
         if request.url.host == 'openidconnect.googleapis.com':
             return httpx.Response(200, json={'sub': 'google-account'})
         if request.method == 'GET':
+            if request.url.path == '/tasks/v1/users/@me/lists/@default':
+                return httpx.Response(200, json={'id': 'default-list'})
+            if request.url.path == '/tasks/v1/users/@me/lists':
+                return httpx.Response(200, json={'items': [{'id': 'default-list'}]})
             if calendar_mode == 'legacy' and '/events' in request.url.path:
                 return httpx.Response(200, json={'items': [flat, edited_flat]})
             if calendar_mode == 'series' and '/events' in request.url.path:

@@ -32,11 +32,12 @@ class GoogleState(Owned, Base):
 
 class GoogleLink(Owned, Base):
     __tablename__ = 'google_links'
-    __table_args__ = (UniqueConstraint('owner_id', 'subject', 'kind', 'remote_id'),)
+    __table_args__ = (UniqueConstraint('owner_id', 'subject', 'kind', 'task_list_id', 'remote_id', name='uq_google_links_remote_list'),)
     owner_id: Mapped[UUID] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), primary_key=True)
     subject: Mapped[str] = mapped_column(String(255), primary_key=True)
     kind: Mapped[str] = mapped_column(String(10), primary_key=True)
     local_id: Mapped[UUID] = mapped_column(primary_key=True)
+    task_list_id: Mapped[str] = mapped_column(String(1024), default='@default', server_default='@default')
     remote_id: Mapped[str] = mapped_column(String(1024))
     fingerprint: Mapped[str] = mapped_column(String(64))
     etag: Mapped[str] = mapped_column(Text)

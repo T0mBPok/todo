@@ -247,6 +247,7 @@ async function resolveGoogleConflict(item,source) {
   finally {syncBusy.value=false}
 }
 function googleSyncTime(value) { return new Date(value).toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) }
+function googleTaskDate(value) { return value ? new Date(value+'T00:00:00').toLocaleDateString('ru-RU') : 'Без даты' }
 
 async function googleAction(action, payload) {
   syncBusy.value = true
@@ -345,7 +346,8 @@ async function googleAction(action, payload) {
         <h2 id="google-dialog-title">Обмен с Google</h2>
         <p v-if="google && !google.configured">Администратор ещё не настроил Google OAuth.</p>
         <template v-else-if="google?.connected">
-          <p>Основной календарь Google и список Google Tasks по умолчанию.</p>
+          <p>Основной календарь Google и все списки Google Tasks.</p>
+          <p>У задач передаются название, описание, дата и отметка выполнения. Точное время остаётся в «Импульсе»: Google Tasks передаёт только дату.</p>
           <label class="google-auto-switch"><input type="checkbox" :checked="google.auto_sync" :disabled="syncBusy" @change="toggleGoogleAuto($event.target.checked)"><span>Автоматическая синхронизация<small>Создание, изменения и удаления в обе стороны. Работает в фоне, даже когда приложение закрыто.</small></span></label>
           <div class="google-sync-state" role="status">
             <strong>{{ google.auto_sync ? 'Обмениваемся автоматически, примерно раз в минуту' : 'Автосинхронизация приостановлена' }}</strong>
@@ -360,7 +362,7 @@ async function googleAction(action, payload) {
             <article v-for="item in googleConflicts" :key="item.kind+item.local_id">
               <strong>{{ item.local?.title || item.remote?.title || 'Удалённая запись' }}</strong>
               <div v-for="[source, label, version] in [['local','Импульс',item.local],['remote','Google',item.remote]]" :key="source" class="google-conflict-version">
-                <span>{{ label }}: {{ version ? version.title : 'Запись удалена' }}<small v-if="version?.start">{{ googleSyncTime(version.start) }} — {{ googleSyncTime(version.end) }}</small></span>
+                <span>{{ label }}: {{ version ? version.title : 'Запись удалена' }}<small v-if="version?.start">{{ googleSyncTime(version.start) }} — {{ googleSyncTime(version.end) }}</small><small v-if="item.kind==='todo' && version">{{ version.completed ? 'Выполнена' : 'Не выполнена' }} · {{ googleTaskDate(version.scheduled_date) }}</small></span>
                 <button :disabled="syncBusy" @click="resolveGoogleConflict(item,source)">{{ version ? 'Оставить эту версию' : 'Подтвердить удаление' }}</button>
               </div>
             </article>

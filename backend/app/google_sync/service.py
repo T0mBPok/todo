@@ -4,6 +4,7 @@ import re
 from datetime import date, datetime, time, timedelta, timezone
 from time import monotonic
 from zoneinfo import ZoneInfo
+from urllib.parse import quote
 
 import httpx
 from fastapi import HTTPException
@@ -26,6 +27,7 @@ from app.recurrences.models import RecurrenceException
 
 EVENTS = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
 TODOS = 'https://tasks.googleapis.com/tasks/v1/lists/@default/tasks'
+TASKLISTS = 'https://tasks.googleapis.com/tasks/v1/users/@me/lists'
 
 
 def fingerprint(data):
@@ -126,7 +128,54 @@ def pull_deleted(db, link, kind, dao, summary):
 
 def todo_data(row):
     return {'title': row.title, 'notes': row.description,
-            'status': 'completed' if row.completed else 'needsAction'}
+            'status': 'completed' if row.completed else 'needsAction',
+            'due': row.scheduled_date.isoformat() + 'T00:00:00Z' if row.scheduled_date else None}
+
+
+def todo_endpoint(task_list_id='@default'):
+    return 'https://tasks.googleapis.com/tasks/v1/lists/' + quote(task_list_id, safe='@') + '/tasks'
+
+
+def todo_list_ids(client, summary):
+    default = fetch(client, 'GET', TASKLISTS + '/@default')
+    if not default or not isinstance(default.get('id'), str):
+        raise HTTPException(502, 'Не удалось прочитать основной список Google Tasks.')
+    result = ['@default']
+    seen = {default['id'], '@default'}
+    params = {'maxResults': 1000}
+    for _ in range(3):
+        page = fetch(client, 'GET', TASKLISTS, params=params)
+        if page is None:
+            raise HTTPException(502, 'Не удалось прочитать списки Google Tasks.')
+        for item in page.get('items', []):
+            key = item.get('id')
+            if not isinstance(key, str) or not 0 < len(key) <= 1024 or any(ord(char) < 32 for char in key):
+                summary['skipped'] += 1
+                continue
+            if key not in seen:
+                result.append(key)
+                seen.add(key)
+        if not page.get('nextPageToken'):
+            return result
+        params['pageToken'] = page['nextPageToken']
+    summary['partial'] = True
+    return result
+
+
+def upgrade_todo_fingerprints(db, links, dao):
+    # Old versions never exchanged dates. Import missing dates on the first
+    # new pull, while preserving locally assigned dates for export/conflict checks.
+    for link in links.values():
+        row = dao.get(link.local_id)
+        if row is None:
+            continue
+        current = todo_data(row)
+        legacy = {name: value for name, value in current.items() if name != 'due'}
+        if link.fingerprint == fingerprint(legacy):
+            link.fingerprint = fingerprint({**legacy, 'due': None})
+            if row.scheduled_date is None:
+                link.etag = ''
+    db.flush()
 
 
 def fetch(client, method, url, **kwargs):
@@ -162,8 +211,11 @@ def incoming(remote, kind):
     if kind == 'todo':
         if remote.get('deleted'):
             raise ValueError
-        return TodoInput(title=remote['title'], description=remote.get('notes') or '',
-                         completed=remote.get('status') == 'completed')
+        due = remote.get('due')
+        scheduled_date = datetime.fromisoformat(due.replace('Z', '+00:00')).date() if due else None
+        return TodoInput(title=(remote.get('title') or '').strip()[:200],
+                         description=(remote.get('notes') or '')[:5000],
+                         completed=remote.get('status') == 'completed', scheduled_date=scheduled_date)
     if remote.get('eventType', 'default') not in {'default', 'birthday'}:
         raise ValueError
     first, last = google_time(remote['start']), google_time(remote['end'])
@@ -206,7 +258,7 @@ def remote_key(remote):
     return key
 
 
-def pull_record(db, remote, kind, subject, links, dao, summary, calendar_zone='UTC', parent=None):
+def pull_record(db, remote, kind, subject, links, dao, summary, calendar_zone='UTC', parent=None, task_list_id='@default'):
     try:
         key = remote_key(remote)
         if remote.get('deleted') or remote.get('status')=='cancelled':
@@ -225,6 +277,10 @@ def pull_record(db, remote, kind, subject, links, dao, summary, calendar_zone='U
         data = incoming(remote, kind)
         if link and kind == 'todo':
             row = db.scalar(select(Todo).where(Todo.id == link.local_id).with_for_update())
+        if kind == 'todo' and row is not None:
+            data.timezone = row.timezone
+            if row.scheduled_date == data.scheduled_date:
+                data.scheduled_at = row.scheduled_at
         encode = event_snapshot if kind == 'event' else todo_data
         if link and local_modified(db,link,row,kind):
             link.conflict = {'remote':remote,'calendar_zone':calendar_zone}
@@ -245,7 +301,7 @@ def pull_record(db, remote, kind, subject, links, dao, summary, calendar_zone='U
                     row.series_parent_id, row.series_original_start = parent
             if link is None:
                 db.flush()
-                link = GoogleLink(subject=subject, kind=kind, local_id=row.id, remote_id=key)
+                link = GoogleLink(subject=subject, kind=kind, local_id=row.id, remote_id=key, task_list_id=task_list_id)
                 db.add(link)
             link.fingerprint = fingerprint(encode(row))
             link.etag = etag
@@ -368,30 +424,42 @@ def pull_calendar(db, client, subject, links, summary):
 
 
 def pull(db, client, connection, kind, summary):
-    links = {item.remote_id: item for item in db.scalars(select(GoogleLink).where(
-        GoogleLink.subject == connection.subject, GoogleLink.kind == kind))}
+    all_links = list(db.scalars(select(GoogleLink).where(
+        GoogleLink.subject == connection.subject, GoogleLink.kind == kind)))
     if kind == 'event':
+        links = {item.remote_id: item for item in all_links}
         pull_calendar(db, client, connection.subject, links, summary)
         return
 
     dao = TodoDAO(db)
-    params = {'maxResults': 100, 'showCompleted': 'true', 'showHidden': 'true', 'showDeleted':'true'}
-    deadline = monotonic() + 16
-    for _ in range(10):
-        if monotonic() > deadline:
-            break
-        page = fetch(client, 'GET', TODOS, params=params)
-        for remote in page.get('items', []):
-            pull_record(db, remote, kind, connection.subject, links, dao, summary)
-        db.commit()
-        if not page.get('nextPageToken'):
-            return
-        params['pageToken'] = page['nextPageToken']
-        calendar_lock(db)
-        current = db.scalar(select(GoogleConnection).with_for_update())
-        if current is None or current.subject != connection.subject:
-            break
-    summary['partial'] = True
+    for task_list_id in todo_list_ids(client, summary):
+        links = {item.remote_id: item for item in all_links if item.task_list_id == task_list_id}
+        upgrade_todo_fingerprints(db, links, dao)
+        params = {'maxResults': 100, 'showCompleted': 'true', 'showHidden': 'true', 'showDeleted': 'true'}
+        deadline = monotonic() + 16
+        for _ in range(10):
+            if monotonic() > deadline:
+                summary['partial'] = True
+                break
+            page = fetch(client, 'GET', todo_endpoint(task_list_id), params=params)
+            if page is None:
+                # A list may be removed between listing it and fetching its tasks.
+                summary['partial'] = True
+                break
+            for remote in page.get('items', []):
+                pull_record(db, remote, kind, connection.subject, links, dao, summary,
+                            task_list_id=task_list_id)
+            db.commit()
+            calendar_lock(db)
+            current = db.scalar(select(GoogleConnection).with_for_update())
+            if current is None or current.subject != connection.subject:
+                summary['partial'] = True
+                return
+            if not page.get('nextPageToken'):
+                break
+            params['pageToken'] = page['nextPageToken']
+        else:
+            summary['partial'] = True
 
 
 def push(db, client, connection, kind, summary):
@@ -410,10 +478,11 @@ def push(db, client, connection, kind, summary):
             summary['partial']=True
             break
         writes+=1
-        remote=fetch(client,'DELETE',endpoint+'/'+link.remote_id,headers={'If-Match':link.etag},
+        endpoint = EVENTS if kind == 'event' else todo_endpoint(link.task_list_id)
+        remote=fetch(client,'DELETE',endpoint+'/'+quote(link.remote_id, safe=''),headers={'If-Match':link.etag},
                      params={'sendUpdates':'none'} if kind=='event' else {})
         if remote is None:
-            current=fetch(client,'GET',endpoint+'/'+link.remote_id)
+            current=fetch(client,'GET',endpoint+'/'+quote(link.remote_id, safe=''))
             link.conflict={'remote':current} if current else {'deleted':True}
             summary['conflicts']+=1
         else:
@@ -428,12 +497,13 @@ def push(db, client, connection, kind, summary):
             summary['partial']=True
             break
         writes+=1
+        endpoint = EVENTS if kind == 'event' else todo_endpoint(link.task_list_id if link else '@default')
         payload=event_export(row,db) if kind=='event' else todo_data(row)
         signature=fingerprint(encode(row))
         export_signature=fingerprint(payload) if kind=='event' else None
         params={'sendUpdates':'none'} if kind=='event' else {}
         if link:
-            remote=fetch(client,'PATCH',endpoint+'/'+link.remote_id,headers={'If-Match':link.etag},params=params,json=payload)
+            remote=fetch(client,'PATCH',endpoint+'/'+quote(link.remote_id, safe=''),headers={'If-Match':link.etag},params=params,json=payload)
         else:
             if kind=='event':payload['id']=row.id.hex
             remote=fetch(client,'POST',endpoint,params=params,json=payload)
@@ -444,7 +514,7 @@ def push(db, client, connection, kind, summary):
                     remote=current
         if remote is None:
             if link:
-                current=fetch(client,'GET',endpoint+'/'+link.remote_id)
+                current=fetch(client,'GET',endpoint+'/'+quote(link.remote_id, safe=''))
                 link.conflict={'remote':current} if current else {'deleted':True}
                 db.commit()
             summary['conflicts']+=1
@@ -530,6 +600,8 @@ def conflict_records(db):
         row=dao.get(link.local_id)
         local={'title':row.title} if row else None
         if row and link.kind=='event':local.update(start=row.start.isoformat(),end=row.end.isoformat())
+        elif row:
+            local.update(completed=row.completed, scheduled_date=row.scheduled_date.isoformat() if row.scheduled_date else None)
         if row and link.kind=='todo':local['completed']=row.completed
         raw=link.conflict.get('remote')
         remote=None
@@ -538,7 +610,13 @@ def conflict_records(db):
             if link.kind=='event':
                 try:remote.update(start=google_time(raw['start']).isoformat(),end=google_time(raw['end']).isoformat())
                 except (KeyError,ValueError,TypeError):pass
-            else:remote['completed']=raw.get('status')=='completed'
+            else:
+                remote['completed']=raw.get('status')=='completed'
+                try:
+                    data=incoming(raw,'todo')
+                    remote['scheduled_date']=data.scheduled_date.isoformat() if data.scheduled_date else None
+                except (ValueError,TypeError,AttributeError):
+                    remote['scheduled_date']=None
         result.append({'local_id':str(link.local_id),'kind':link.kind,'local':local,'remote':remote})
     return result
 
@@ -554,12 +632,12 @@ def resolve_conflict(db,kind,local_id,source):
         if connection is None:raise HTTPException(409,'Подключите аккаунт Google.')
         link=db.scalar(select(GoogleLink).where(GoogleLink.subject==connection.subject,GoogleLink.kind==kind,GoogleLink.local_id==local_id).with_for_update())
         if link is None or not link.conflict:raise HTTPException(409,'Конфликт уже разрешён. Обновите список.')
-        endpoint,dao=(EVENTS,TaskDAO(db)) if kind=='event' else (TODOS,TodoDAO(db))
+        endpoint,dao=(EVENTS,TaskDAO(db)) if kind=='event' else (todo_endpoint(link.task_list_id),TodoDAO(db))
         encode=event_snapshot if kind=='event' else todo_data
         row=dao.get(local_id)
         with httpx.Client(timeout=httpx.Timeout(5,connect=3),trust_env=False) as client:
             client.headers['Authorization']='Bearer '+refresh_access(client,connection)
-            remote=fetch(client,'GET',endpoint+'/'+link.remote_id)
+            remote=fetch(client,'GET',endpoint+'/'+quote(link.remote_id, safe=''))
             removed=not remote or remote.get('deleted') or remote.get('status')=='cancelled'
             params={'sendUpdates':'none'} if kind=='event' else {}
             if source=='remote':
@@ -577,10 +655,10 @@ def resolve_conflict(db,kind,local_id,source):
                         links={link.remote_id:link}
                     summary={'changed':0,'skipped':0,'conflicts':0,'partial':False}
                     updated=pull_record(db,remote,kind,connection.subject,links,dao,summary,
-                                        link.conflict.get('calendar_zone','UTC'))
+                                        link.conflict.get('calendar_zone','UTC'), task_list_id=link.task_list_id)
                     if updated is None:raise HTTPException(422,'Не удалось прочитать эту запись Google. Исправьте её в Google и повторите обмен.')
             elif row is None:
-                if not removed and fetch(client,'DELETE',endpoint+'/'+link.remote_id,headers={'If-Match':remote['etag']},params=params) is None:
+                if not removed and fetch(client,'DELETE',endpoint+'/'+quote(link.remote_id, safe=''),headers={'If-Match':remote['etag']},params=params) is None:
                     raise HTTPException(409,'Запись Google снова изменилась. Повторите выбор версии.')
                 db.delete(link)
             else:
@@ -589,7 +667,7 @@ def resolve_conflict(db,kind,local_id,source):
                     if kind=='event':payload['id']=uuid4().hex
                     saved=fetch(client,'POST',endpoint,params=params,json=payload)
                 else:
-                    saved=fetch(client,'PATCH',endpoint+'/'+link.remote_id,headers={'If-Match':remote['etag']},params=params,json=payload)
+                    saved=fetch(client,'PATCH',endpoint+'/'+quote(link.remote_id, safe=''),headers={'If-Match':remote['etag']},params=params,json=payload)
                 if not saved:raise HTTPException(409,'Запись Google снова изменилась. Повторите выбор версии.')
                 link.remote_id=remote_key(saved);link.etag=saved['etag'];link.fingerprint=fingerprint(encode(row))
                 link.export_fingerprint=fingerprint(event_export(row,db)) if kind=='event' else None
