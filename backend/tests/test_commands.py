@@ -60,14 +60,15 @@ def test_model_cannot_invent_source_filters(monkeypatch):
     monkeypatch.setattr(httpx,'post',fake)
     op=interpret(CommandRequest(text='Добавь в описание тренировки взять воду'),['Тренировка']).operations[0]
     assert op.date_reference is None and op.time_reference is None
-def test_command_conflict_rolls_back(client,monkeypatch):
+def test_move_into_occupied_time_preserves_both_events(client,monkeypatch):
     api,_=client
     original=api.post('/api/tasks',json=task()).json()
     api.post('/api/tasks',json=task('12:00','13:00'))
     cmd=prepare(api,monkeypatch,new_time='12:30')
-    assert execute(api,cmd).status_code==409
+    assert execute(api,cmd).status_code==200
     remaining=api.get('/api/tasks').json()
-    assert next(t for t in remaining if t['id']==original['id'])['start']==original['start']
+    assert len(remaining)==2
+    assert next(t for t in remaining if t['id']==original['id'])['start']=='2098-11-12T05:30:00Z'
 
 # Historical parser tests exercise the retained compatibility implementation explicitly.
 import pytest

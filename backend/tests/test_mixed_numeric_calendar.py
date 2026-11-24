@@ -110,7 +110,7 @@ def test_exact_screenshot_offers_both_source_pairs_without_using_destination_tim
     assert all(op['requires_confirmation'] for op in command['operations'])
 
 
-def test_replacement_conflict_rolls_back_deletion(client, monkeypatch):
+def test_stale_replacement_target_does_not_delete_the_series(client, monkeypatch):
     api, session = client
     values, _, day = seed_numeric(api)
     start = datetime.combine(day, datetime.min.time(), ZoneInfo('Asia/Tomsk')).replace(hour=16)
@@ -126,6 +126,11 @@ def test_replacement_conflict_rolls_back_deletion(client, monkeypatch):
     result = api.post('/api/commands', json={'text': 'В среду убери пару 1С в 13:15. На среду поставь на 16:00 ПО.'})
     assert result.status_code == 200, result.text
     command = result.json()
+    from app.tasks.models import Task
+    from uuid import UUID
+    selected=session.get(Task,UUID(command['operations'][0]['candidates'][0]['id']))
+    selected.description='Изменено после подготовки команды'
+    session.commit()
     saved = api.post('/api/commands/'+command['id']+'/execute', json={'choices': [
         {'candidate': 0, 'scope': 'occurrence'}, {'candidate': 0}]})
     assert saved.status_code == 409, saved.text

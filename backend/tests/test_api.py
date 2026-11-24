@@ -23,7 +23,6 @@ def client():
         connection.execute(sql_text(f'CREATE SCHEMA {schema}'))
         connection.execute(sql_text(f'SET LOCAL search_path TO {schema}'))
         Base.metadata.create_all(connection)
-        connection.execute(sql_text("ALTER TABLE tasks ADD CONSTRAINT tasks_no_overlap EXCLUDE USING gist (tstzrange(start, \"end\", '[)') WITH &&) WHERE (recurrence IS NULL)"))
         with Session(bind=connection, join_transaction_mode='create_savepoint', expire_on_commit=False) as session:
             app.dependency_overrides[get_session] = lambda: session
             app.dependency_overrides[require_user] = lambda: None
@@ -46,10 +45,11 @@ def test_task_crud_and_timezone(client):
     assert api.delete('/api/tasks/' + data['id']).status_code == 204
     assert api.delete('/api/tasks/' + data['id']).status_code == 404
 
-def test_database_conflicts_and_adjacent_tasks(client):
+def test_overlapping_and_adjacent_events_keep_requested_times(client):
     api, _ = client
     assert api.post('/api/tasks', json=task()).status_code == 201
-    assert api.post('/api/tasks', json=task('10:30', '11:30')).status_code == 409
+    assert api.post('/api/tasks', json=task('10:30', '11:30')).status_code == 201
+    assert len(api.get('/api/tasks').json()) == 2
     assert api.post('/api/tasks', json=task('11:00', '12:00')).status_code == 201
 
 @pytest.mark.parametrize('data', [task('11:00','10:00'), {**task(), 'title':' '}, {**task(), 'start':'2098-11-12T10:00:00'}])
@@ -78,8 +78,8 @@ def test_confirm_rolls_back_entire_batch(client):
     plan = Plan(id=uuid4(), text='test', timezone='Asia/Tomsk', tasks=[task()], note='', status='draft')
     session.add(plan); session.commit()
     before = session.scalar(select(func.count()).select_from(Task))
-    result = api.post(f'/api/plans/{plan.id}/confirm', json={'tasks':[task(), task('10:30','12:00')]})
-    assert result.status_code == 409
+    result = api.post(f'/api/plans/{plan.id}/confirm', json={'tasks':[task(), task('12:00','10:30')]})
+    assert result.status_code == 422
     assert session.scalar(select(func.count()).select_from(Task)) == before
     assert api.get(f'/api/plans/{plan.id}').json()['status'] == 'draft'
 

@@ -113,12 +113,14 @@ def test_future_scope_starts_at_first_selected_day_even_when_indices_reversed(cl
     remaining=[event for event in TaskService(session).list(local(1,0),local(30,23)) if event.id==roots[0].id]
     assert len(remaining)==1 and remaining[0].start==local(4,10)
 
-def test_future_deletion_rolls_back_both_series_when_replacement_conflicts(client):
+def test_future_deletion_rolls_back_both_series_when_second_target_changes(client):
     api,session=client
     roots=seed(session,'weekly')
     occupied=Task(title='Занято',start=local(25),end=local(25)+timedelta(hours=1))
     session.add(occupied);session.commit()
     row=command(session,roots,create=True)
+    roots[1].description='Изменено после подготовки команды'
+    session.commit()
     result=api.post(f'/api/commands/{row.id}/execute',json={'choices':[
         {'candidates':[0,1],'scope':'future'},{'candidate':0}]})
     assert result.status_code==409,result.text

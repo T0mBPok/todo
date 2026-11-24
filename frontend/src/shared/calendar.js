@@ -28,28 +28,37 @@ export function eventPosition(task, day) {
 
 export function positionedEvents(tasks, day) {
   const result = []
-  let group = [], columnEnds = [], groupEnd = -Infinity
+  let group = [], columns = [], groupEnd = -Infinity
   function finishGroup() {
-    for (const {task, column} of group) {
-      const style = eventPosition(task, day)
-      if (columnEnds.length > 1) {
-        style.left = 'calc(' + (100 * column / columnEnds.length) + '% + 3px)'
-        style.right = 'calc(' + (100 * (columnEnds.length - column - 1) / columnEnds.length) + '% + 3px)'
+    for (const item of group) {
+      const style = eventPosition(item.task, day)
+      let span = 1
+      // Use any empty columns to the right until another overlapping card.
+      while (item.column + span < columns.length && !columns[item.column + span].some(other =>
+        item.start < other.end && item.end > other.start)) span++
+      if (columns.length > 1) {
+        style.left = 'calc(' + (100 * item.column / columns.length) + '% + 3px)'
+        style.right = 'calc(' + (100 * (columns.length - item.column - span) / columns.length) + '% + 3px)'
       }
-      result.push({task, style})
+      result.push({task:item.task, style, column:item.column, columns:columns.length, span})
     }
   }
-  for (const task of eventsOnDay(tasks, day)) {
+  const items = eventsOnDay(tasks, day).sort((a,b) =>
+    new Date(a.start) - new Date(b.start) || new Date(b.end) - new Date(a.end) ||
+    String(a.occurrence_id || a.id || '').localeCompare(String(b.occurrence_id || b.id || '')))
+  for (const task of items) {
     const start = +new Date(task.start), end = +new Date(task.end)
     if (start >= groupEnd) {
       finishGroup()
       group = []
-      columnEnds = []
+      columns = []
+      groupEnd = -Infinity
     }
-    const freeColumn = columnEnds.findIndex(previousEnd => previousEnd <= start)
-    const column = freeColumn === -1 ? columnEnds.length : freeColumn
-    columnEnds[column] = end
-    group.push({task, column})
+    let column = columns.findIndex(items => items[items.length-1].end <= start)
+    if (column === -1) { column = columns.length; columns.push([]) }
+    const item = {task, start, end, column}
+    columns[column].push(item)
+    group.push(item)
     groupEnd = Math.max(groupEnd, end)
   }
   finishGroup()

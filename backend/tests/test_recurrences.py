@@ -43,27 +43,27 @@ def test_delete_one_then_entire_series(client):
     assert not [t for t in window(api) if t['id']==data['id']]
     assert session.scalar(select(func.count()).select_from(RecurrenceException).where(RecurrenceException.task_id==data['id']))==0
 
-def test_deleted_occurrence_frees_its_slot_but_not_next_week(client):
+def test_deleted_occurrence_and_overlapping_events_keep_their_own_dates(client):
     api,_=client
     data=api.post('/api/tasks',json=series()).json()
     items=[t for t in window(api) if t['id']==data['id']]
     first,second=items[:2]
     assert api.delete('/api/tasks/'+data['id'],params={'scope':'occurrence','occurrence_start':first['start']}).status_code==204
     assert api.post('/api/tasks',json={'title':'Разовое событие','start':first['start'],'end':first['end']}).status_code==201
-    assert api.post('/api/tasks',json={'title':'Конфликт','start':second['start'],'end':second['end']}).status_code==409
+    assert api.post('/api/tasks',json={'title':'Конфликт','start':second['start'],'end':second['end']}).status_code==201
     assert api.delete('/api/tasks/'+data['id'],params={'scope':'occurrence','occurrence_start':'2098-11-13T18:00:00+07:00'}).status_code==422
 
-def test_recurring_series_conflicts_with_future_one_off(client):
+def test_recurring_series_can_overlap_a_future_one_off(client):
     api,_=client
     data=series(); start=datetime.fromisoformat(data['start'])+timedelta(days=28)
     assert api.post('/api/tasks',json={'title':'Занято','start':start.isoformat(),'end':(start+timedelta(hours=1)).isoformat()}).status_code==201
-    assert api.post('/api/tasks',json=data).status_code==409
+    assert api.post('/api/tasks',json=data).status_code==201
 
-def test_recurring_series_conflict_each_other(client):
+def test_recurring_series_can_overlap_each_other(client):
     api,_=client
     assert api.post('/api/tasks',json=series()).status_code==201
     other=series();other['start']='2098-11-19T18:30:00+07:00';other['end']='2098-11-19T19:30:00+07:00'
-    assert api.post('/api/tasks',json=other).status_code==409
+    assert api.post('/api/tasks',json=other).status_code==201
 
 def test_dst_preserves_local_time():
     task=TaskInput(title='Тренировка',start='2026-03-22T18:00:00+01:00',end='2026-03-22T19:00:00+01:00',recurrence={'frequency':'weekly','timezone':'Europe/Berlin'})

@@ -171,7 +171,7 @@ def test_oauth_binding_and_bidirectional_exchange(monkeypatch):
             assert by_title['Point event']['end'] == '2020-01-09T05:00:01Z'
             task = {'title': 'Local appointment', 'start': '2020-01-09T09:00:00+07:00',
                     'end': '2020-01-09T10:00:00+07:00'}
-            assert alice.post('/api/tasks', json=task).status_code == 409
+            assert alice.post('/api/tasks', json=task).status_code == 201
             task.update(start='2020-01-09T10:00:00+07:00', end='2020-01-09T11:00:00+07:00')
             assert alice.post('/api/tasks', json=task).status_code == 201
             series_id = repeating[0]['id']

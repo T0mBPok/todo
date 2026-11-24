@@ -43,3 +43,37 @@ test('overlapping timed events use separate columns', () => {
   assert.notEqual(cards[0].style.left, cards[1].style.left)
   assert.equal(cards[2].style.left, undefined)
 })
+
+
+test('17:00 event shares the day with one ending at 17:30 without shifting either', () => {
+  const tasks = [
+    {id:'first',start:'2026-11-26T16:00:00',end:'2026-11-26T17:30:00'},
+    {id:'second',start:'2026-11-26T17:00:00',end:'2026-11-26T18:00:00'},
+  ]
+  const cards = positionedEvents(tasks,'2026-11-26')
+  assert.deepEqual(cards.map(card=>[card.column,card.columns]),[[0,2],[1,2]])
+  assert.equal(cards[0].task.end,tasks[0].end)
+  assert.equal(cards[1].task.start,tasks[1].start)
+})
+
+test('overlapping cards expand into columns that are free for their entire duration', () => {
+  const task = (id,start,end) => ({id,start:'2026-11-26T'+start,end:'2026-11-26T'+end})
+  const cards = positionedEvents([
+    task('long','09:00','10:00'),task('first','09:00','09:30'),
+    task('short','09:00','09:15'),task('later','09:30','10:00'),
+    task('after','10:00','11:00')
+  ],'2026-11-26')
+  const later=cards.find(card=>card.task.id==='later')
+  assert.equal(later.column,1)
+  assert.equal(later.columns,3)
+  assert.equal(later.span,2)
+  assert.equal(cards.find(card=>card.task.id==='after').columns,1)
+})
+
+test('equal-start events have a stable layout regardless of API response order', () => {
+  const tasks=[{id:'short',start:'2026-11-26T09:00:00',end:'2026-11-26T09:30:00'},
+    {id:'long',start:'2026-11-26T09:00:00',end:'2026-11-26T10:00:00'}]
+  const layout=items=>positionedEvents(items,'2026-11-26').map(card=>[card.task.id,card.column])
+  assert.deepEqual(layout(tasks),layout([...tasks].reverse()))
+  assert.equal(layout(tasks)[0][0],'long')
+})

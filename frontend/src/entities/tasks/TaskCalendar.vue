@@ -1,6 +1,5 @@
 <script setup>
 import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { categoryLabel } from '../../shared/categories'
 import { dateKey, fromKey, addDays, monthDays, eventsOnDay, positionedEvents } from '../../shared/calendar'
 import { createCalendarWindow, calendarWindowRange, calendarScrollPosition, shiftCalendarDate } from '../../shared/calendarScroll'
 import TodoCalendarItem from '../todos/TodoCalendarItem.vue'
@@ -8,6 +7,7 @@ import TodoEditor from '../todos/TodoEditor.vue'
 import {request} from '../../shared/api.js'
 import {errorMessage} from '../../shared/errors.js'
 import CalendarEventEditor from './CalendarEventEditor.vue'
+import CalendarEventCard from './CalendarEventCard.vue'
 const props = defineProps({ tasks: {type:Array,default:()=>[]}, day: String, view: {type:String,default:'week'} })
 const emit = defineEmits(['range-change','refresh','error','update:day','view-day','select-task'])
 const todoEditor=ref(null), completing=ref(new Set())
@@ -192,7 +192,7 @@ function slotClick(event,day) {
         <div class="hour-labels"><span v-for="hour in 23" :key="hour" :style="{top:hour/24*100+'%'}">{{ String(hour).padStart(2,'0') }}:00</span></div>
         <div v-for="d in days" :key="dateKey(d)" :class="['day-column',{'weekend':d.getDay()===0||d.getDay()===6}]" @click="slotClick($event,d)">
           <div v-for="hour in 24" :key="hour" class="hour-line" :style="{top:(hour-1)/24*100+'%'}"></div>
-          <template v-for="{task,style} in positionedEvents(timedTasks,dateKey(d))" :key="task.occurrence_id||task.id"><TodoCalendarItem v-if="task.entity==='todo'" class="calendar-event calendar-todo-position" :task="task" :style="style" @open="todoEditor.open" @complete="completeTodo"/>          <button v-else :data-category="task.category" :class="['calendar-event',color(task)]" :style="style" @click.stop="preview(task, $event)" :title="task.title+' · '+categoryLabel(task.category)+' · '+time(task.start)+'–'+time(task.end)"><strong><span v-if="task.is_fixed" aria-label="Нельзя переносить">🔒 </span><span v-if="task.recurrence" aria-label="Повторяющееся событие">↻ </span>{{ task.title }}</strong><span class="calendar-event-time">{{ time(task.start) }} – {{ time(task.end) }}</span></button></template>
+          <template v-for="{task,style} in positionedEvents(timedTasks,dateKey(d))" :key="task.occurrence_id||task.id"><TodoCalendarItem v-if="task.entity==='todo'" class="calendar-event calendar-todo-position" :task="task" :style="style" @open="todoEditor.open" @complete="completeTodo"/>          <CalendarEventCard v-else :task="task" :data-category="task.category" :class="color(task)" :style="style" @open="preview(task,$event)"/></template>
           <div v-if="dateKey(d)===today" class="now-line" :style="{top:(now.getHours()*60+now.getMinutes())/1440*100+'%'}"><i></i></div>
         </div>
       </div>
@@ -214,11 +214,7 @@ function slotClick(event,day) {
 </template>
 
 <style scoped>
-.calendar-event:not(.calendar-todo-position){display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;padding-top:7px;text-align:left;gap:3px}
-.calendar-event strong{font-size:14px;line-height:1.3}
-.calendar-event-time{font-size:12px}
 .month-event strong{font-size:12px;line-height:1.25}
-@media(max-width:760px){.calendar-event strong{font-size:13px}}
 
 @media(max-width:760px){.calendar-event-time{display:none}}
 .calendar-todo-position{min-height:32px;padding:5px 7px;text-align:left;}

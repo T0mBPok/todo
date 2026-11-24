@@ -355,7 +355,6 @@ class CommandService:
                 snapshot=TaskRead.model_validate(operation['candidates'][choice.candidate]);op=operation['instruction']
                 if op['operation']=='create':
                     creation=TaskInput(**{key:getattr(snapshot,key) for key in TaskInput.model_fields})
-                    self.tasks.validate([creation])
                     created=self.tasks.dao.add(creation);self.session.flush()
                     results.append(TaskRead.model_validate(created).model_dump(mode='json'))
                     continue

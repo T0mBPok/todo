@@ -9,19 +9,17 @@ from sqlalchemy.exc import IntegrityError
 from app.tasks.dao import TaskDAO
 from app.tasks.schemas import TaskRead
 from app.recurrences.dao import RecurrenceDAO
-from app.recurrences.service import instances, validate_conflicts, require_occurrence, shift_occurrence, wall_offset
+from app.recurrences.service import instances, require_occurrence, shift_occurrence, wall_offset
 
 def calendar_lock(session):
-    # Serialize all calendar writes so virtual repetitions cannot race inserts.
+    # Serialize calendar writes so recurrence edits and deletion cannot race.
     owner = session.info.get('owner_id')
     session.execute(text('SELECT pg_advisory_xact_lock(:key)'), {'key': (owner.int & ((1 << 63) - 1)) if owner else 83910241})
 
 def commit(session):
     try: session.commit()
-    except IntegrityError as error:
+    except IntegrityError:
         session.rollback()
-        if getattr(error.orig,'sqlstate',None)=='23P01':
-            raise HTTPException(409,'Задачи пересекаются по времени. Измените время.') from error
         raise
 
 class TaskService:
@@ -58,22 +56,11 @@ class TaskService:
         if task is None: raise HTTPException(404,'Задача не найдена')
         return task
 
-    def validate(self,data,ignore=None):
-        existing=[task for task in self.dao.list() if task.id!=ignore and not task.is_all_day]
-        validate_conflicts(data,existing,self.recurrences.exceptions())
-
     def create(self,data):
         calendar_lock(self.session)
-        self.validate([data])
         task=self.dao.add(data)
         commit(self.session)
         return task
-
-    def validate_edit(self, task, data, start, end, ignore=None):
-        if task.is_all_day:
-            return
-        if (data.start, data.end) != (start, end) or data.recurrence:
-            self.validate([data], ignore=ignore)
 
     def update_google_series(self, root, task, data, occurrence_start):
         if task.series_parent_id:
@@ -96,9 +83,6 @@ class TaskService:
             self.recurrences.clear(root.id)
             for previous in excluded:
                 self.recurrences.exclude(root.id, shift_occurrence(previous, offset, zone))
-        if not root.is_all_day and (start, end) != (root.start, root.end):
-            candidate = Task(id=root.id, title=data.title, start=start, end=end, recurrence=rule, is_all_day=False)
-            self.validate([candidate], ignore=root.id)
 
         fields = data.model_dump(include={'title', 'description', 'category', 'is_fixed'})
         children = self.session.scalars(select(Task).where(Task.series_parent_id == root.id))
@@ -136,7 +120,6 @@ class TaskService:
                         raise HTTPException(409,"Это повторение уже удалено или изменено.")
                     self.recurrences.exclude(root.id,occurrence_start)
                     single=TaskInput(**{**data.model_dump(),'recurrence':None})
-                    self.validate_edit(root, single, occurrence_start, finish)
                     changed=self.dao.add(single)
                     changed.from_google=root.from_google
                     changed.is_all_day=root.is_all_day
@@ -158,7 +141,6 @@ class TaskService:
                         index=(previous.astimezone(zone).date()-old_anchor.astimezone(zone).date()).days//step
                         shifted=new_anchor.astimezone(zone)+timedelta(days=index*step)
                         self.recurrences.exclude(root.id,shifted.astimezone(timezone.utc))
-                    self.validate([changes],ignore=root.id)
                     for key,value in changes.model_dump().items(): setattr(root,key,value)
                     root.recurrence=changes.recurrence.model_dump()
                     # Keep renamed descriptions in detached occurrences coherent;
@@ -167,14 +149,12 @@ class TaskService:
                         child.is_fixed=data.is_fixed;child.title=data.title;child.description=data.description;child.category=data.category
                     changed=root
                 else:
-                    self.validate_edit(task, data, task.start, task.end, ignore=task.id)
                     for key,value in data.model_dump().items(): setattr(task,key,value)
                     task.recurrence=None
                     changed=task
             else:
                 if task.is_all_day:
                     data.recurrence = None
-                self.validate_edit(task, data, task.start, task.end, ignore=task.id)
                 for key,value in data.model_dump().items(): setattr(task,key,value)
                 task.recurrence=data.recurrence.model_dump() if data.recurrence else None
                 changed=task
