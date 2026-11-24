@@ -10,7 +10,7 @@ from app.core import config
 from app.core.request_logging import log_result_rejection
 from app.plans.schemas import PlanCheck, PlanOutput
 from app.plans.review import build_review
-from app.plans.transcript_guard import safe_transcript_edit, display_transcript, explicit_clock_text
+from app.plans.transcript_guard import safe_transcript_edit, display_transcript, explicit_clock_text, restore_literal_recipients
 from app.plans.colloquial_time import resolve_colloquial_ranges
 from app.tasks.schemas import TaskInput
 from app.plans.dates import ANCHOR, TIME_RANGE, enforce_date_context, enforce_spoken_time, spoken_slots, words, canonical_date_anchors
@@ -35,6 +35,9 @@ def parse_plan(content, spoken, timezone_name, duration_source=None):
         slots=list(spoken_slots(normalize_transcript(spoken)))
         for raw in value['tasks']:
             if not isinstance(raw,dict) or not isinstance(raw.get('title'),str):continue
+            raw['title'] = restore_literal_recipients(spoken, raw['title'])
+            if isinstance(raw.get('description'), str):
+                raw['description'] = restore_literal_recipients(spoken, raw['description'])
             title_words=set(words(raw['title']))
             matches=[len(title_words & set(words(clause))) for clause,_,_ in slots]
             best=max(matches,default=0)
@@ -94,6 +97,7 @@ class AIPlanner:
             log_result_rejection('transcript_normalization', 'invalid_text_field')
             return original, ''
         normalized = normalize_transcript(normalized.strip())
+        normalized = restore_literal_recipients(original, normalized)
         # Accept semantic wording repairs without enumerating every ASR typo.
         # Numeric clocks, dates and their order remain protected independently.
         if not safe_transcript_edit(original, normalized):

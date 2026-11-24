@@ -1,7 +1,7 @@
 """Ground names and deletion corrections in actual calendar events."""
 import re
 from difflib import SequenceMatcher
-from app.plans.dates import ANCHOR, CLOCK, normalize_clock_minutes
+from app.plans.dates import ANCHOR, CLOCK, START_TIME, normalize_clock_minutes
 from app.commands.schemas import Interpretation,Operation
 
 ALIASES={'пару':'пара','пары':'пара','паре':'пара','парой':'пара','универ':'университет','универе':'университет','универа':'университет','университете':'университет','университета':'университет','валибол':'волейбол','волейболу':'волейбол','боскибол':'баскетбол','баскетболу':'баскетбол'}
@@ -110,14 +110,14 @@ def explicit_scheduled_creation(text):
 
 
 def declarative_calendar_add(text):
-    # A dated statement with an interval describes a new event. Mutations and
+    # A dated statement with a start time describes a new event. Mutations and
     # references to an existing event must still go through grounded selection.
     from app.plans.colloquial_time import RANGE
     return bool(
         re.match(r'\s*(?:в\s+|на\s+)?(?:' + ANCHOR.pattern + r')', text, re.I)
-        and RANGE.search(text)
+        and (RANGE.search(text) or START_TIME.search(normalize_clock_minutes(text)))
         and not CHANGES_EXISTING.search(text)
-        and not re.search(r'\b(?:эту?|это|его|е[её]|тот|ту|длительность|описание|повторяющ\w*)\b|[?]', text, re.I)
+        and not re.search(r'\b(?:эту?|это|его|е[её]|тот|ту|длительность|описание|повторяющ\w*|что|какие|когда|сколько|покажи|найди|посмотри|свобод\w*)\b|[?]', text, re.I)
     )
 
 

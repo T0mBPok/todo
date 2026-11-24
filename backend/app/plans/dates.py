@@ -79,6 +79,10 @@ def normalize_clock_minutes(text):
     text = re.sub(rf'(?<![\d.])([01]?\d|2[0-3])\.([0-5]\d)(?=\s*(?:{DAYPART_TOKENS})\b)',
                   lambda m:f'{int(m[1]):02d}:{m[2]}',text,flags=re.I)
 
+    # A numeric hour with an explicit day part is a clock, not a date or quantity.
+    text = re.sub(rf'\b((?:в|во|на|к|с|до)\s+)([01]?\d|2[0-3])(?:\s+час(?:а|ов)?)?\s+(?=(?:{DAYPART_TOKENS})\b)',
+                  lambda match: match[1] + f'{int(match[2]):02d}:00 ', text, flags=re.I)
+
     # ASR may spell a clock as two number groups. Require a time
     # preposition or a day part so ordinary quantities remain untouched.
     text = re.sub(r'\b((?:с|до|в|во|на|к)\s+)([01]?\d|2[0-3])\s+([0-5]\d)(?![\d:]|\s*(?:руб|минут|секунд))\b',

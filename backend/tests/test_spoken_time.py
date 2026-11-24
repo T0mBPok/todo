@@ -17,7 +17,7 @@ def test_spoken_tomsk_range_survives_utc_model_error_and_auto_save(client, monke
     # Reproduce both failure modes: the first model call loses the explicit
     # interval, then the planner mistakes spoken wall time for UTC.
     def interpret(request, _context):
-        assert request.text == 'Завтра тренировка с 18:00 до 19:00'
+        assert request.text == 'Поставь завтра тренировку с 18:00 до 19:00'
         return grounded_ai.Decision(intent='create', note='', create_text='Завтра тренировка')
 
     monkeypatch.setattr(grounded_ai, 'interpret_calendar', interpret)
@@ -32,9 +32,9 @@ def test_spoken_tomsk_range_survives_utc_model_error_and_auto_save(client, monke
         calls.append(payload)
         if 'text' in payload['format'].get('properties', {}):
             assert '18:00 до 19:00' in payload['messages'][1]['content']
-            content = '{"text":"Завтра тренировка с 18:00 до 19:00","note":""}'
+            content = '{"text":"Поставь завтра тренировку с 18:00 до 19:00","note":""}'
         else:
-            assert payload['messages'][1]['content'].startswith('Завтра тренировка с 18:00 до 19:00')
+            assert payload['messages'][1]['content'].startswith('Поставь завтра тренировку с 18:00 до 19:00')
             content = model_plan.model_dump_json()
         return httpx.Response(200, request=httpx.Request('POST', url), json={'message': {'content': content}})
 
