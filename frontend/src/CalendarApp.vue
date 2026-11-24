@@ -1,5 +1,5 @@
 <script setup>
-import { commandReady, initialChoice, needsScope } from './shared/commandChoices.js'
+import { commandReady, initialChoice, needsScope, executionChoices } from './shared/commandChoices.js'
 import { errorMessage } from './shared/errors.js'
 const props=defineProps({refreshToken:{type:Number,default:0}})
 import { onMounted, nextTick, ref, computed, watch } from 'vue'
@@ -111,7 +111,7 @@ async function executeCommand() {
   if(!readyCommand()) { message.value='Выбери задачу и область изменения.'; return }
   busy.value=true
   try {
-    const result=await request(`/commands/${command.value.id}/execute`,'POST',{choices:choices.value})
+    const result=await request(`/commands/${command.value.id}/execute`,'POST',{choices:executionChoices(command.value, choices.value)})
     message.value=result.note; savedTasks.value=result.tasks; command.value=null
     if(result.tasks.length) {contextTask.value=result.tasks[0];day.value=localDate(result.tasks[0].start).slice(0,10)}
     await refreshSafely()

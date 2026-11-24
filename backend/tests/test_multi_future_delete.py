@@ -38,11 +38,13 @@ def command(session, roots, day=25, create=False):
     return row
 
 @pytest.mark.parametrize('frequency',['daily','weekly','google'])
-def test_both_series_end_at_selected_day_and_keep_history(client,frequency):
+@pytest.mark.parametrize('browser_payload',[False,True])
+def test_both_series_end_at_selected_day_and_keep_history(client,frequency,browser_payload):
     api,session=client
     roots=seed(session,frequency)
     row=command(session,roots,create=True)
     choices=[{'candidates':[0,1],'scope':'future'},{'candidate':0}]
+    if browser_payload:choices[0]['candidate']=None
     result=api.post(f'/api/commands/{row.id}/execute',json={'choices':choices})
     assert result.status_code==200,result.text
     tasks=TaskService(session).list(local(1,0),local(30,23)+timedelta(days=45))
@@ -143,3 +145,10 @@ def test_future_scope_at_first_occurrence_removes_whole_empty_series(client):
     result=api.delete(f'/api/tasks/{root.id}',params={'scope':'future','occurrence_start':local(4,10).isoformat()})
     assert result.status_code==204,result.text
     assert session.get(Task,root.id) is None
+
+def test_null_single_selection_without_multiple_choice_is_rejected(client):
+    api,session=client
+    row=command(session,seed(session,'weekly'))
+    result=api.post(f'/api/commands/{row.id}/execute',json={'choices':[{'candidate':None,'scope':'future'}]})
+    assert result.status_code==422
+    assert len(TaskService(session).list(local(1,0),local(30,23)))==8

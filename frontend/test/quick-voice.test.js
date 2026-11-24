@@ -1,5 +1,5 @@
 import {test} from 'node:test'
-import { commandReady, initialChoice, needsScope } from '../src/shared/commandChoices.js'
+import { commandReady, initialChoice, needsScope, executionChoices } from '../src/shared/commandChoices.js'
 import { errorMessage } from '../src/shared/errors.js'
 import assert from 'node:assert/strict'
 import {readFile} from 'node:fs/promises'
@@ -10,7 +10,7 @@ function setup({response,error,confirmError,voiceFactory}={}) {
   const payloads=[], executions=[]
   const ref=value=>({value}), computed=get=>({get value(){return get()}})
   const hook={supported:true,listening:ref(false),processing:ref(false),starting:ref(false),audioUrl:ref(''),rawTranscript:ref(''),engineName:ref(''),elapsed:ref(0),recordSeconds:ref(0),toggle:async()=>{toggles++;hook.listening.value=!hook.listening.value},cancel:()=>{cancels++;hook.listening.value=false}}
-  const deps={commandReady,initialChoice,needsScope,errorMessage,defineProps:()=>({refreshToken:0}),ref,computed,watch:()=>{},nextTick:async()=>{},onMounted:()=>{},window:{innerWidth:1280},
+  const deps={commandReady,initialChoice,needsScope,executionChoices,errorMessage,defineProps:()=>({refreshToken:0}),ref,computed,watch:()=>{},nextTick:async()=>{},onMounted:()=>{},window:{innerWidth:1280},
     useVoiceInput:options=>{callbacks=options;return voiceFactory ? voiceFactory(options) : hook},
     request:async (path,method,payload)=>{if(path==='/todos')return [];if(path==='/commands')payloads.push(payload);if(path.endsWith('/execute'))executions.push(payload);requests++;if(error)throw Error(error);return path.endsWith('/execute')?{note:'Готово',tasks:[]}:path.endsWith('/clear-calendar')?{note:'Календарь очищен.'}:typeof response === 'function' ? response(requests) : response},
     listTasks:async()=>[],visibleRange:()=>({}),localDate:value=>new Date(value).toISOString().slice(0,16),
@@ -251,5 +251,6 @@ test('both deletion candidates and future scope are confirmed together with the 
   await s.finish('подтверждаю')
   assert.equal(s.executions.length, 1)
   assert.deepEqual(s.executions[0].choices[0].candidates, [0, 1])
+  assert.equal('candidate' in s.executions[0].choices[0], false)
   assert.equal(s.executions[0].choices[0].scope, 'future')
 })

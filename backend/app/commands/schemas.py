@@ -1,6 +1,6 @@
 from typing import Literal
 from uuid import UUID
-from pydantic import BaseModel,Field,AwareDatetime
+from pydantic import BaseModel,Field,AwareDatetime,model_validator
 from app.plans.schemas import PlanRequest
 class HistoryItem(BaseModel):
     role: Literal['user','assistant']
@@ -34,9 +34,14 @@ class Interpretation(BaseModel):
     operations: list[Operation]=Field(default_factory=list,max_length=30)
 class Choice(BaseModel):
     skip: bool=False
-    candidate: int=Field(default=0,ge=0)
+    candidate: int|None=Field(default=0,ge=0)
     candidates: list[int]|None=Field(default=None,min_length=1,max_length=30)
     scope: Literal['occurrence','future','series']|None=None
+    @model_validator(mode='after')
+    def require_selection(self):
+        if self.candidate is None and self.candidates is None and not self.skip:
+            raise ValueError('Выберите событие.')
+        return self
 class Execute(BaseModel):
     choices: list[Choice]=Field(min_length=1,max_length=30)
 

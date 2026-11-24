@@ -22,3 +22,13 @@ export function initialChoice(operation, scope = null) {
   return {candidate: operation.candidates.length === 1 ? 0 : null,
     ...(operation.instruction.operation === 'delete' ? {candidates: operation.candidates.length === 1 ? [0] : []} : {}), scope}
 }
+
+export function executionChoices(command, choices) {
+  return choices.map((choice, index) => {
+    if (command.operations[index].instruction.operation === 'delete' && choice.candidates) {
+      const {candidate, ...multiple} = choice
+      return multiple
+    }
+    return {...choice}
+  })
+}

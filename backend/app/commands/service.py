@@ -331,6 +331,10 @@ class CommandService:
             # Delete before insert/update so replacement can reuse the released interval.
             selected=[]
             for operation,choice in zip(command.operations,data.choices):
+                if choice.skip:
+                    if operation['instruction']['operation']!='delete':
+                        raise HTTPException(422,'Исключить можно только удаление.')
+                    continue
                 indices=choice.candidates if choice.candidates is not None else [choice.candidate]
                 if choice.candidates is not None and operation['instruction']['operation']!='delete':
                     raise HTTPException(422,'Выбрать несколько событий можно только для удаления.')
