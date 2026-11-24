@@ -24,12 +24,33 @@ class ExtractedPlan(BaseModel):
     needs_clarification: bool
     review: list[PlanCheck] = Field(default_factory=list, max_length=30)
 
-def parse_plan(content, spoken, timezone_name):
+def has_explicit_duration(text):
+    return bool(TIME_RANGE.search(text) or re.search(
+        r'\b(?:час\w*|минут\w*|секунд\w*|полчаса|полтора|полторы|до)\b', text, re.I))
+
+
+def parse_plan(content, spoken, timezone_name, duration_source=None):
     value=json.loads(content)
     if isinstance(value,dict) and isinstance(value.get('tasks'),list):
         slots=list(spoken_slots(normalize_transcript(spoken)))
         for raw in value['tasks']:
             if not isinstance(raw,dict) or not isinstance(raw.get('title'),str):continue
+            title_words=set(words(raw['title']))
+            matches=[len(title_words & set(words(clause))) for clause,_,_ in slots]
+            best=max(matches,default=0)
+            grounded_start=best>0 and matches.count(best)==1 and ANCHOR.search(
+                canonical_date_anchors(spoken,datetime.now(ZoneInfo(timezone_name)).date()))
+            if grounded_start and not has_explicit_duration(spoken if duration_source is None else duration_source):
+                # Date, local clock and default duration come from the request,
+                # before schema validation can reject an invented model end or
+                # a missing timezone. No model timestamp is needed here.
+                now=datetime.now(ZoneInfo(timezone_name))
+                candidate=TaskInput(title=raw['title'],start=now,end=now+timedelta(hours=1))
+                enforce_date_context([candidate],spoken,timezone_name)
+                clause=slots[matches.index(best)][0]
+                if not enforce_spoken_time([candidate],clause,timezone_name):
+                    raw['start']=candidate.start.isoformat()
+                    raw['end']=candidate.end.isoformat()
             try:
                 for field in ('start','end'):TypeAdapter(AwareDatetime).validate_python(raw.get(field))
             except ValidationError as error:
@@ -118,7 +139,8 @@ class AIPlanner:
             # clock source that can be overridden by broken ASR fragments.
             clock_source = normalized if safe_transcript_edit(normalize_transcript(spoken), normalized) else spoken
             clock_source = resolve_colloquial_ranges(clock_source, request.timezone)
-            parsed = parse_plan(data['message']['content'], clock_source, request.timezone)
+            parsed = parse_plan(data['message']['content'], clock_source, request.timezone,
+                                duration_source=spoken+' '+request.text)
             if not parsed.tasks:
                 raise HTTPException(422, parsed.note or 'Уточните день, время и задачу.')
             model_reasons = {parsed.tasks[item.task_index].title: item.reason for item in parsed.review
@@ -134,11 +156,7 @@ class AIPlanner:
             parsed.tasks = enforce_date_context(parsed.tasks, date_source, request.timezone)
             # The small model can copy example durations. Apply the documented
             # default in code when the user supplied no duration or end time.
-            duration_mentioned = (
-                TIME_RANGE.search(spoken) or TIME_RANGE.search(request.text)
-                or re.search(r'\b(?:час\w*|минут\w*|секунд\w*|полчаса|полтора|полторы|до)\b',
-                             spoken + ' ' + request.text, re.IGNORECASE)
-            )
+            duration_mentioned = has_explicit_duration(spoken+' '+request.text)
             if not duration_mentioned:
                 for task in parsed.tasks:
                     task.end = task.start + timedelta(hours=1)
