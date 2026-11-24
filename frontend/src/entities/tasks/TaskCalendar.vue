@@ -216,7 +216,6 @@ function slotClick(event,day) {
 <style scoped>
 .month-event strong{font-size:12px;line-height:1.25}
 
-@media(max-width:760px){.calendar-event-time{display:none}}
 .calendar-todo-position{min-height:32px;padding:5px 7px;text-align:left;}
 .continuous-calendar-scroll { flex:1; min-height:0; overflow:auto; overscroll-behavior-x:contain; touch-action:auto; overflow-anchor:none; }
 .calendar-timeline { position:relative; }
