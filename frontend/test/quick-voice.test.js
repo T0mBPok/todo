@@ -1,4 +1,5 @@
 import {test} from 'node:test'
+import { commandReady, initialChoice, needsScope } from '../src/shared/commandChoices.js'
 import { errorMessage } from '../src/shared/errors.js'
 import assert from 'node:assert/strict'
 import {readFile} from 'node:fs/promises'
@@ -6,18 +7,18 @@ const component=await readFile(new URL('../src/CalendarApp.vue',import.meta.url)
 const script=component.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm,'')
 function setup({response,error,confirmError,voiceFactory}={}) {
   let callbacks, toggles=0,cancels=0,confirms=0,requests=0
-  const payloads=[]
+  const payloads=[], executions=[]
   const ref=value=>({value}), computed=get=>({get value(){return get()}})
   const hook={supported:true,listening:ref(false),processing:ref(false),starting:ref(false),audioUrl:ref(''),rawTranscript:ref(''),engineName:ref(''),elapsed:ref(0),recordSeconds:ref(0),toggle:async()=>{toggles++;hook.listening.value=!hook.listening.value},cancel:()=>{cancels++;hook.listening.value=false}}
-  const deps={errorMessage,defineProps:()=>({refreshToken:0}),ref,computed,watch:()=>{},nextTick:async()=>{},onMounted:()=>{},window:{innerWidth:1280},
+  const deps={commandReady,initialChoice,needsScope,errorMessage,defineProps:()=>({refreshToken:0}),ref,computed,watch:()=>{},nextTick:async()=>{},onMounted:()=>{},window:{innerWidth:1280},
     useVoiceInput:options=>{callbacks=options;return voiceFactory ? voiceFactory(options) : hook},
-    request:async (path,method,payload)=>{if(path==='/todos')return [];if(path==='/commands')payloads.push(payload);requests++;if(error)throw Error(error);return path.endsWith('/execute')?{note:'Готово',tasks:[]}:path.endsWith('/clear-calendar')?{note:'Календарь очищен.'}:typeof response === 'function' ? response(requests) : response},
+    request:async (path,method,payload)=>{if(path==='/todos')return [];if(path==='/commands')payloads.push(payload);if(path.endsWith('/execute'))executions.push(payload);requests++;if(error)throw Error(error);return path.endsWith('/execute')?{note:'Готово',tasks:[]}:path.endsWith('/clear-calendar')?{note:'Календарь очищен.'}:typeof response === 'function' ? response(requests) : response},
     listTasks:async()=>[],visibleRange:()=>({}),localDate:value=>new Date(value).toISOString().slice(0,16),
     dateKey:()=>'',fromKey:()=>new Date(),monthDays:()=>[],
     confirmPlan:async()=>{confirms++;if(confirmError)throw Error(confirmError);return [{id:'saved',start:'2026-10-20T18:00:00Z'}]}}
   const expose='return {quickMic,cancelQuick,voiceOpen,quickMode,text,message,command,plan,autoSave,busy,generate,planEditor,clearCalendarDraft,confirmCalendarClear,choices,excludeDeletion}'
   const app=new Function(...Object.keys(deps),script+'\n'+expose)(...Object.values(deps))
-  return {app,hook,payloads,status:()=>({toggles,cancels,confirms,requests}),async finish(text){hook.listening.value=false;hook.rawTranscript.value=text;app.text.value=text;await callbacks.onComplete()},async transcribe(corrected,raw=corrected,commandText){hook.listening.value=false;hook.rawTranscript.value=raw;app.text.value=corrected;await callbacks.onComplete({commandText})},fail:value=>callbacks.onError(value)}
+  return {app,hook,payloads,executions,status:()=>({toggles,cancels,confirms,requests}),async finish(text){hook.listening.value=false;hook.rawTranscript.value=text;app.text.value=text;await callbacks.onComplete()},async transcribe(corrected,raw=corrected,commandText){hook.listening.value=false;hook.rawTranscript.value=raw;app.text.value=corrected;await callbacks.onComplete({commandText})},fail:value=>callbacks.onError(value)}
 }
 test('quick recording starts immediately without opening the panel, second click stops it',async()=>{
   const {app,hook,status}=setup();await app.quickMic()
@@ -229,4 +230,26 @@ test('clean speech is displayed while unresolved source remains available to the
  s.app.text.value='Пары с 14:00 до 15:00.'
  await s.app.generate(false)
  assert.equal(s.payloads[1].text,'Пары с 14:00 до 15:00.')
+})
+
+test('both deletion candidates and future scope are confirmed together with the addition', async () => {
+  const operations = [
+    {instruction: {operation: 'delete', scope: 'unspecified'}, requires_confirmation: true,
+     candidates: [{id: 'first', recurrence: {}}, {id: 'second', recurrence: {}}]},
+    {instruction: {operation: 'create', scope: 'occurrence'}, requires_confirmation: true,
+     candidates: [{id: 'new', start: '2026-11-25T06:15:00Z'}]}
+  ]
+  const s = setup({response: {kind: 'command', id: 'mixed', note: '', operations}})
+  await s.finish('Удали пару 1С и добавь ПО')
+  await s.finish('оба события')
+  assert.deepEqual(s.app.choices.value[0].candidates, [0, 1])
+  assert.equal(s.executions.length, 0)
+  await s.finish('с этого дня и дальше')
+  assert.equal(s.app.choices.value[0].scope, 'future')
+  assert.equal(s.app.choices.value[1].scope, 'occurrence')
+  assert.equal(s.executions.length, 0)
+  await s.finish('подтверждаю')
+  assert.equal(s.executions.length, 1)
+  assert.deepEqual(s.executions[0].choices[0].candidates, [0, 1])
+  assert.equal(s.executions[0].choices[0].scope, 'future')
 })

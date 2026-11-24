@@ -1,4 +1,5 @@
 <script setup>
+import { commandReady, initialChoice, needsScope } from './shared/commandChoices.js'
 import { errorMessage } from './shared/errors.js'
 const props=defineProps({refreshToken:{type:Number,default:0}})
 import { onMounted, nextTick, ref, computed, watch } from 'vue'
@@ -22,7 +23,7 @@ const planEditor = ref(null)
 const clearCalendarDraft = ref(null)
 const clearScopes = ref({})
 const clearExcluded = ref([])
-const bulkDelete = computed(() => command.value?.operations?.every(op=>op.instruction.operation==='delete' && op.candidates.length===1) && (command.value.operations.length>1 || command.value.operations.some(op=>op.bulk_delete)))
+const bulkDelete = computed(() => command.value?.operations?.every(op=>op.instruction.operation==='delete' && op.candidates.length===1 && !op.candidates[0].recurrence && !op.candidates[0].series_parent_id) && (command.value.operations.length>1 || command.value.operations.some(op=>op.bulk_delete)))
 function excludeDeletion(index) { choices.value[index].skip=true }
 function excludeClear(id) { clearExcluded.value=[...clearExcluded.value,id] }
 const clearReady = computed(() => clearCalendarDraft.value && (!clearCalendarDraft.value.items || clearCalendarDraft.value.items.some(item=>!clearExcluded.value.includes(item.id))) &&
@@ -104,7 +105,7 @@ async function refresh() { const version=++refreshVersion; const [result, todoRe
 watch(taskRange,()=>refreshSafely())
 async function refreshSafely() { try { await refresh() } catch (error) { message.value = errorMessage(error) } }
 function readyCommand() {
-  return command.value && choices.value.some(c=>!c.skip) && choices.value.every((c,i)=>c.skip || c.candidate!==null && (command.value.operations[i].instruction.operation==='create' || !(command.value.operations[i].candidates[c.candidate].recurrence || command.value.operations[i].candidates[c.candidate].series_parent_id) || c.scope))
+  return commandReady(command.value, choices.value)
 }
 async function executeCommand() {
   if(!readyCommand()) { message.value='Выбери задачу и область изменения.'; return }
@@ -188,19 +189,21 @@ async function generate(fromVoice = false, voiceCommand = '') {
     const reply = lower.replace(/[.!? ]+$/, '')
     const scopeReply = reply.replace(/^подтверждаю\s+/, '')
     const ordinal = reply.match(/^(?:(?:выбери|вариант)\s+)?([1-9]|первый|второй|третий|четв[её]ртый|пятый)(?:\s+вариант)?$/)
-    const scope = /^(?:всю серию|вся серия|вс[её] повторения|вс[её] события)$/.test(scopeReply)
+    const scope = /^(?:с (?:этого|выбранного|завтрашнего) дня(?: и дальше)?|это и последующие(?: события| повторения)?)$/.test(scopeReply) ? 'future' : /^(?:всю серию|вся серия|вс[её] повторения|вс[её] события)$/.test(scopeReply)
       ? 'series'
       : /^(?:только )?(?:это событие|одно событие|это повторение|одно повторение)$/.test(scopeReply) ? 'occurrence' : null
     const confirmed = /^(?:подтверждаю|подтверди|выполни|примени|сохрани)$/.test(reply) ||
       (scope && reply.startsWith('подтверждаю '))
-    if (ordinal || scope || confirmed) {
+    const selectAll = /^(?:(?:выбери|удали) )?(?:оба|обе|оба события|обе пары|все варианты|все найденные(?: события)?)$/.test(reply)
+    if (ordinal || scope || confirmed || selectAll) {
+      if(selectAll) command.value.operations.forEach((op,i)=>{if(op.instruction.operation==='delete') choices.value[i].candidates=op.candidates.map((_,n)=>n)})
       const pending=choices.value.findIndex(c=>c.candidate===null)
       if(ordinal && pending>=0) {
         const selected = ordinal[1]
         const index = /^\d$/.test(selected) ? Number(selected) - 1 : ['перв','втор','трет','четв','пят'].findIndex(word => selected.startsWith(word))
-        if(index>=0 && index<command.value.operations[pending].candidates.length) choices.value[pending].candidate=index
+        if(index>=0 && index<command.value.operations[pending].candidates.length) { choices.value[pending].candidate=index; if(command.value.operations[pending].instruction.operation==='delete') choices.value[pending].candidates=[index] }
       }
-      if(scope) choices.value.forEach(c=>c.scope=scope)
+      if(scope) choices.value.forEach((c,i)=>{if(scope!=='future' || command.value.operations[i].instruction.operation==='delete') c.scope=scope})
       text.value=''
       if(readyCommand() && ((autoSave.value && !command.value.operations.some(o=>o.requires_confirmation)) || confirmed)) await executeCommand();else {message.value='Выбери вариант и область изменения, затем скажи «подтверждаю».';voiceOpen.value=true}
       return
@@ -225,7 +228,7 @@ async function generate(fromVoice = false, voiceCommand = '') {
       voiceOpen.value = true
     } else if(response.kind==='command') {
       command.value=response
-      choices.value=response.operations.map(o=>({candidate:o.candidates.length===1?0:null,scope:o.instruction.scope==='unspecified'?(response.operations.every(op=>op.instruction.operation==='delete' && op.candidates.length===1) && response.operations.length>1?'occurrence':null):o.instruction.scope}))
+      choices.value=response.operations.map(o=>initialChoice(o,o.instruction.scope==='unspecified'?(response.operations.every(op=>op.instruction.operation==='delete' && op.candidates.length===1) && response.operations.length>1?'occurrence':null):o.instruction.scope))
       message.value=response.note
       busy.value=false
       if(autoSave.value && readyCommand() && !response.operations.some(o=>o.requires_confirmation)) await executeCommand()
@@ -331,7 +334,7 @@ watch(()=>props.refreshToken,()=>refreshSafely())
         </section>
         <section v-if="audioUrl||lastTranscript" class="speech-result"><div class="result-heading"><h3>{{ audioUrl?'Твоя запись':'Исходный текст' }}</h3><span v-if="engineName" class="engine-badge">{{ engineName }}<template v-if="elapsed"> · {{ elapsed }} с</template></span></div><audio v-if="audioUrl" :src="audioUrl" controls preload="metadata" aria-label="Прослушать последнюю запись"></audio><details v-if="rawTranscript||lastTranscript"><summary>Расшифровка и исправления</summary><h4>Распознано из аудио</h4><p>{{ rawTranscript||lastTranscript }}</p><button class="link" :disabled="busy" @click="retryTranscript">Исправить текст</button></details></section>
         <section v-if="savedTasks.length" class="saved-results"><h3>Результат: {{ savedTasks.length }}</h3><article v-for="task in savedTasks" :key="task.id" class="saved-event"><span class="saved-check">✓</span><div><strong>{{ task.title }}<span v-if="task.recurrence" class="repeat-badge"> ↻ {{ task.recurrence.frequency==='weekly'?'Каждую неделю':'Каждый день' }}</span></strong><small>{{ displayTime(task.start) }} — {{ displayTime(task.end) }}</small><p v-if="task.description">{{ task.description }}</p></div></article><button class="outline-button" @click="closeVoice">Посмотреть в календаре</button></section>
-        <section v-if="command" class="preview command-review"><h3>Подтверждение команды</h3><p>{{ command.note }}</p><div v-if="bulkDelete" class="delete-list"><p>Удалить все перечисленные дела? Крестик исключает событие из удаления.</p><template v-for="(op,i) in command.operations" :key="i"><article v-if="!choices[i].skip" class="delete-chip"><div><strong>{{ op.candidates[0].title }}</strong><small>{{ displayTime(op.candidates[0].start) }}{{ op.candidates[0].recurrence?' · Только это повторение':'' }}</small></div><button type="button" :disabled="busy" :aria-label="'Исключить '+op.candidates[0].title" @click="excludeDeletion(i)">×</button></article></template></div><template v-else><p>Можно сказать «первый вариант», «только это событие», «всю серию», «подтверждаю» или «отмена».</p><article v-for="(op,i) in command.operations" :key="i" class="draft"><h4>{{ op.instruction.operation==='create'?'Добавить':op.instruction.operation==='delete'?'Удалить':'Изменить' }}: {{ op.instruction.target || 'Выбранная задача' }}</h4><label v-for="(candidate,n) in op.candidates" :key="candidate.occurrence_id||candidate.id"><input type="radio" :name="'candidate-'+i" v-model="choices[i].candidate" :value="n">{{ n+1 }}. {{ candidate.title }} · {{ displayTime(candidate.start) }}</label><p v-if="op.instruction.new_recurrence">Повторение: {{ op.instruction.new_recurrence==='weekly'?'каждую неделю':'каждый день' }} · без окончания. Дата, время и описание сохраняются.</p><p v-if="op.instruction.new_title">Название: {{ op.instruction.new_title }}</p><p v-if="op.instruction.new_time || op.instruction.new_date_reference">Новое время: {{ op.instruction.new_date_reference }} {{ op.instruction.new_time }}</p><p v-if="op.instruction.description!==null">{{ op.instruction.append_description?'Добавить в описание':'Описание' }}: {{ op.instruction.description }}</p><fieldset v-if="op.instruction.operation!=='create' && choices[i].candidate!==null && (op.candidates[choices[i].candidate].recurrence || op.candidates[choices[i].candidate].series_parent_id)"><legend>Какие повторения?</legend><label><input type="radio" v-model="choices[i].scope" value="occurrence">Только это событие</label><label><input type="radio" v-model="choices[i].scope" value="series">Вся серия</label></fieldset></article></template><button class="primary-button" :disabled="busy || !readyCommand()" @click="executeCommand">Подтвердить</button><button class="outline-button" :disabled="busy" @click="command=null;text='';message='Команда отменена.'">Отмена</button></section>
+        <section v-if="command" class="preview command-review"><h3>Подтверждение команды</h3><p>{{ command.note }}</p><div v-if="bulkDelete" class="delete-list"><p>Удалить все перечисленные дела? Крестик исключает событие из удаления.</p><template v-for="(op,i) in command.operations" :key="i"><article v-if="!choices[i].skip" class="delete-chip"><div><strong>{{ op.candidates[0].title }}</strong><small>{{ displayTime(op.candidates[0].start) }}{{ op.candidates[0].recurrence?' · Только это повторение':'' }}</small></div><button type="button" :disabled="busy" :aria-label="'Исключить '+op.candidates[0].title" @click="excludeDeletion(i)">×</button></article></template></div><template v-else><p>Для удаления можно отметить несколько событий. Голосом: «оба события», «с этого дня и дальше», «всю серию», «подтверждаю» или «отмена».</p><article v-for="(op,i) in command.operations" :key="i" class="draft"><h4>{{ op.instruction.operation==='create'?'Добавить':op.instruction.operation==='delete'?'Удалить':'Изменить' }}: {{ op.instruction.target || 'Выбранная задача' }}</h4><button v-if="op.instruction.operation==='delete' && op.candidates.length>1" type="button" class="outline-button" :disabled="busy" @click="choices[i].candidates=op.candidates.map((_,n)=>n)">Выбрать все</button><label v-for="(candidate,n) in op.candidates" :key="candidate.occurrence_id||candidate.id"><input v-if="op.instruction.operation==='delete'" type="checkbox" v-model="choices[i].candidates" :value="n" :disabled="busy"><input v-else type="radio" :name="'candidate-'+i" v-model="choices[i].candidate" :value="n" :disabled="busy">{{ n+1 }}. {{ candidate.title }} · {{ displayTime(candidate.start) }}</label><p v-if="op.instruction.new_recurrence">Повторение: {{ op.instruction.new_recurrence==='weekly'?'каждую неделю':'каждый день' }} · без окончания. Дата, время и описание сохраняются.</p><p v-if="op.instruction.new_title">Название: {{ op.instruction.new_title }}</p><p v-if="op.instruction.new_time || op.instruction.new_date_reference">Новое время: {{ op.instruction.new_date_reference }} {{ op.instruction.new_time }}</p><p v-if="op.instruction.description!==null">{{ op.instruction.append_description?'Добавить в описание':'Описание' }}: {{ op.instruction.description }}</p><fieldset v-if="needsScope(op, choices[i])"><legend>Какие повторения?</legend><label><input type="radio" v-model="choices[i].scope" value="occurrence">Только выбранные повторения</label><label v-if="op.instruction.operation==='delete'"><input type="radio" v-model="choices[i].scope" value="future">С выбранного дня и дальше · предыдущие сохранить</label><label><input type="radio" v-model="choices[i].scope" value="series">Все повторения выбранных событий</label></fieldset></article></template><button class="primary-button" :disabled="busy || !readyCommand()" @click="executeCommand">Подтвердить</button><button class="outline-button" :disabled="busy" @click="command=null;text='';message='Команда отменена.'">Отмена</button></section>
         <PlanEditor v-if="plan&&!busy" ref="planEditor" :key="plan.id" :plan="plan" @saved="savedFromPreview" @error="message=$event" />
       </div></AssistantDrawer>
   </div>

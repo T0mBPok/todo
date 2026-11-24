@@ -284,6 +284,7 @@ defineExpose({ preview, create })
         <fieldset :disabled="busy">
           <legend class="visually-hidden">Какие события изменить</legend>
           <label><input v-model="scope" type="radio" value="occurrence" name="event-scope" autofocus> Только это событие</label>
+          <label v-if="scopeAction === 'delete'"><input v-model="scope" type="radio" value="future" name="event-scope"> С этого дня и дальше · предыдущие сохранить</label>
           <label><input v-model="scope" type="radio" value="series" name="event-scope"> Вся серия</label>
         </fieldset>
         <p v-if="error" class="editor-error" role="alert">{{ error }}</p>

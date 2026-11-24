@@ -34,8 +34,9 @@ class Interpretation(BaseModel):
     operations: list[Operation]=Field(default_factory=list,max_length=30)
 class Choice(BaseModel):
     skip: bool=False
-    candidate: int=Field(ge=0)
-    scope: Literal['occurrence','series']|None=None
+    candidate: int=Field(default=0,ge=0)
+    candidates: list[int]|None=Field(default=None,min_length=1,max_length=30)
+    scope: Literal['occurrence','future','series']|None=None
 class Execute(BaseModel):
     choices: list[Choice]=Field(min_length=1,max_length=30)
 

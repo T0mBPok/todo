@@ -195,10 +195,26 @@ class TaskService:
                     if occurrence_start is None: raise HTTPException(422,'Укажите начало удаляемого повторения.')
                     require_occurrence(task,occurrence_start)
                     self.recurrences.exclude(task.id,occurrence_start)
+            elif scope=='future':
+                root=self.require(task.series_parent_id) if task.series_parent_id else task
+                selected=task.series_original_start or task.start if task.series_parent_id else occurrence_start
+                if selected is None:raise HTTPException(422,'Укажите выбранное повторение.')
+                if not task.series_parent_id:require_occurrence(root,selected)
+                zone=ZoneInfo(root.recurrence['timezone'])
+                cutoff=selected.astimezone(zone).replace(hour=0,minute=0,second=0,microsecond=0).astimezone(timezone.utc)
+                if cutoff<=root.start:
+                    self.dao.delete(root)
+                else:
+                    from app.google_sync.service import export_recurrence_lines
+                    from app.recurrences.service import truncate_rules
+                    lines=truncate_rules(export_recurrence_lines(root),root.start,cutoff,zone,root.is_all_day)
+                    root.recurrence={'frequency':'google','timezone':str(zone),'rules':lines}
+                    for child in list(self.session.scalars(select(Task).where(Task.series_parent_id==root.id))):
+                        if (child.series_original_start or child.start)>=cutoff:self.dao.delete(child)
             elif scope=='series':
                 root=self.require(task.series_parent_id) if task.series_parent_id else task
                 self.dao.delete(root)
-            else: raise HTTPException(422,'Выберите: удалить одно событие или всю серию.')
+            else: raise HTTPException(422,'Выберите: одно событие, с выбранного дня или всю серию.')
         else: self.dao.delete(task)
         if commit_changes: commit(self.session)
         else: self.session.flush()

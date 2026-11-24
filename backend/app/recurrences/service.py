@@ -5,6 +5,39 @@ from dateutil.rrule import rrulestr
 
 UTC=timezone.utc
 
+
+def truncate_rules(lines, start, cutoff, zone, all_day=False):
+    """Materialize a finite recurrence, preserving RRULE counts and RDATEs."""
+    import re
+    anchor=start.astimezone(zone)
+    boundary=cutoff.astimezone(zone)
+    if all_day:
+        anchor=anchor.replace(tzinfo=None)
+        boundary=boundary.replace(tzinfo=None)
+    result=[]
+    for line in lines:
+        if line.startswith('RRULE:'):
+            previous=rrulestr(line,dtstart=anchor).before(boundary,inc=False)
+            if previous is None:continue
+            parts=[part for part in line[6:].split(';') if not part.startswith(('COUNT=','UNTIL='))]
+            until=previous.strftime('%Y%m%d') if all_day else previous.astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')
+            result.append('RRULE:'+';'.join(parts+['UNTIL='+until]))
+        elif line.startswith('RDATE'):
+            head,values=line.split(':',1)
+            tzid=re.search(r'TZID=([^;:]+)',head)
+            date_zone=ZoneInfo(tzid[1]) if tzid else zone
+            kept=[]
+            for value in values.split(','):
+                fmt='%Y%m%d' if len(value)==8 else '%Y%m%dT%H%M%S'+('Z' if value.endswith('Z') else '')
+                point=datetime.strptime(value,fmt).replace(tzinfo=UTC if value.endswith('Z') else date_zone)
+                if point<cutoff:kept.append(value)
+            if kept:result.append(head+':'+','.join(kept))
+        else:
+            result.append(line)
+    if not any(line.startswith(('RRULE:','RDATE')) for line in result):
+        result.append('RDATE'+(';VALUE=DATE:'+start.strftime('%Y%m%d') if all_day else ':'+start.astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')))
+    return result
+
 def rule_of(task):
     rule=getattr(task,'recurrence',None)
     return rule.model_dump() if hasattr(rule,'model_dump') else rule

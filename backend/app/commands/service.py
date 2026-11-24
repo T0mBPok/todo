@@ -329,7 +329,20 @@ class CommandService:
         results=[];deleted_series=set()
         try:
             # Delete before insert/update so replacement can reuse the released interval.
-            ordered=sorted(zip(command.operations,data.choices),key=lambda pair: {'delete':0,'update':1,'create':2}[pair[0]['instruction']['operation']])
+            selected=[]
+            for operation,choice in zip(command.operations,data.choices):
+                indices=choice.candidates if choice.candidates is not None else [choice.candidate]
+                if choice.candidates is not None and operation['instruction']['operation']!='delete':
+                    raise HTTPException(422,'Выбрать несколько событий можно только для удаления.')
+                if len(indices)!=len(set(indices)) or any(index<0 or index>=len(operation['candidates']) for index in indices):
+                    raise HTTPException(422,'Неверные варианты событий.')
+                if choice.scope=='future' and operation['instruction']['operation']!='delete':
+                    raise HTTPException(422,'С выбранного дня поддерживается только удаление.')
+                selected.extend((operation,choice.model_copy(update={'candidate':index})) for index in indices)
+            if len(selected)>30:raise HTTPException(422,'Выберите не более 30 событий.')
+            ordered=sorted(selected,key=lambda pair: (
+                {'delete':0,'update':1,'create':2}[pair[0]['instruction']['operation']],
+                pair[0]['candidates'][pair[1].candidate]['start']))
             for operation,choice in ordered:
                 if choice.skip:
                     if operation['instruction']['operation']!='delete': raise HTTPException(422,'Исключить можно только удаление.')
@@ -344,7 +357,7 @@ class CommandService:
                     continue
                 requested_scope=choice.scope
                 root_id=snapshot.series_parent_id or snapshot.id
-                if op['operation']=='delete' and requested_scope=='series' and root_id in deleted_series:continue
+                if op['operation']=='delete' and requested_scope in ('series','future') and root_id in deleted_series:continue
                 task=self.tasks.require(snapshot.id)
                 if task.category!=snapshot.category or task.title!=snapshot.title or task.description!=snapshot.description or task.recurrence!=(snapshot.recurrence.model_dump(exclude_none=True) if snapshot.recurrence else None):
                     raise HTTPException(409,'Задача уже изменилась. Повторите команду.')
@@ -357,7 +370,7 @@ class CommandService:
                 if recurring and choice.scope is None: raise HTTPException(422,'Выберите одно событие или всю серию.')
                 if op['operation']=='delete':
                     self.tasks.delete(task.id,scope,snapshot.occurrence_start,commit_changes=False)
-                    if scope=='series':deleted_series.add(root_id)
+                    if scope in ('series','future'):deleted_series.add(root_id)
                 else:
                     zone=ZoneInfo(operation['timezone']);start=snapshot.start.astimezone(zone);duration=snapshot.end-snapshot.start
                     if op['new_date_reference']:

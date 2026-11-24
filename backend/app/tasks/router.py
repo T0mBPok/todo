@@ -22,6 +22,6 @@ def update_task(task_id: UUID, data: TaskInput, scope: Literal['occurrence','ser
     return TaskService(session).update(task_id, data,scope,occurrence_start)
 
 @router.delete('/{task_id}', status_code=204)
-def delete_task(task_id: UUID, scope: Literal['occurrence','series'] | None = None, occurrence_start: AwareDatetime | None = None, session: Session = Depends(get_session)):
+def delete_task(task_id: UUID, scope: Literal['occurrence','future','series'] | None = None, occurrence_start: AwareDatetime | None = None, session: Session = Depends(get_session)):
     TaskService(session).delete(task_id,scope,occurrence_start)
     return Response(status_code=204)
