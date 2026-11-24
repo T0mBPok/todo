@@ -17,7 +17,7 @@ def targeted_rows(request, rows):
     if not CHANGES_EXISTING.search(request.text) or BROAD.search(request.text):
         return None
     terms = [word for word in tokens(request.text)
-             if word.isalpha() and not CHANGES_EXISTING.fullmatch(word) and not ANCHOR.fullmatch(word)]
+             if re.search(r'[а-яёa-z]', word, re.I) and not CHANGES_EXISTING.fullmatch(word) and not ANCHOR.fullmatch(word)]
     named = [row for row in rows if any(score_name(term, row.title) for term in terms)]
     if named:
         return named

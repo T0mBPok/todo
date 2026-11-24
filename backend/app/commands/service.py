@@ -45,6 +45,12 @@ class CommandService:
     def prepare(self,request):
         if is_calendar_clear(request.text):
             return prepare_clear(self.session, request.text)
+        mixed = re.fullmatch(
+            r'\s*(?P<remove>[^.!?;]+)[.;]\s*(?P<add>[^!?;]+)\s*', request.text, re.S)
+        if (mixed and re.search(r'\b(?:убери|удали|отмени)\b', mixed['remove'], re.I)
+                and not re.search(r'перенес|измен|переимен|вместо', mixed['remove'], re.I)
+                and explicit_scheduled_creation(mixed['add'])):
+            return self.prepare_mixed(request, mixed['remove'], mixed['add'])
         from app.commands.context import calendar_context
         from app.commands.grounded_ai import Decision, SelectedOperation, interpret_calendar
         from app.commands.schemas import Operation
@@ -181,6 +187,66 @@ class CommandService:
         command=Command(text=request.text,operations=operations,note=note)
         self.session.add(command);self.session.commit()
         return {'kind':'command','id':command.id,'operations':operations,'note':note}
+    def prepare_mixed(self, request, removal, addition):
+        # Give each parser only its own clause: a destination clock must never
+        # select the source event, and creation keeps the planner's time guards.
+        from app.commands.context import calendar_context
+        from app.commands.schemas import Operation
+        from app.plans.dates import ANCHOR, canonical_date_anchors
+        remove_request = request.model_copy(update={'text': removal})
+        prepared = self.prepare(remove_request)
+        if prepared['kind'] != 'command' or any(
+                item['instruction']['operation'] != 'delete' for item in prepared['operations']):
+            raise HTTPException(422, 'Не удалось определить удаляемую пару. Уточните название и время; календарь не изменён.')
+        operations = prepared['operations']
+        if not re.search(
+                r'\d{1,2}:\d{2}|\b(?:все|всё|обе|оба|кажд\w*|утра|вечера|полдень|полночь)\b'
+                r'|\b(?:в|на|с)\s+(?:\d|час|пол|один|дв|три|чет|пят|шест|сем|вос|дев|десят)', removal, re.I):
+            _, mapping = calendar_context(remove_request, self.tasks)
+            if (re.search(r'\b(?:пару|задачу|событие)\b', removal, re.I)
+                    and len({item['instruction']['target'] for item in operations}) == 1):
+                operations = operations[:1]
+            for item in operations:
+                title = item['instruction']['target']
+                matches = [task.model_dump(mode='json') for task in mapping.values()
+                           if exact_title(title, task.title)]
+                if matches and not item.get('bulk_delete'):
+                    item['candidates'] = matches
+        exact_add = re.fullmatch(
+            r'\s*(?P<day>.+?)\b(?:поставь|добавь|запланируй)\s+(?:на|в)\s+'
+            r'(?P<clock>(?:[01]?\d|2[0-3]):[0-5]\d)\s+(?P<title>[\w-]{1,200})[.]?\s*', addition, re.I)
+        zone = ZoneInfo(request.timezone)
+        today = datetime.now(zone).date()
+        days = {anchor(match.group(), today) for match in ANCHOR.finditer(
+            canonical_date_anchors(exact_add['day'], today))} if exact_add else set()
+        if exact_add and len(days) == 1 and not re.search(
+                r'\b(?:и|кажд\w*|повтор\w*|потом|затем|утра|дня|вечера|ночи)\b', exact_add['title'], re.I):
+            hour, minute = clock(exact_add['clock'])
+            start = datetime.combine(days.pop(), datetime.min.time(), zone).replace(hour=hour, minute=minute)
+            value = PlanOutput(tasks=[TaskInput(title=exact_add['title'], start=start,
+                                               end=start+timedelta(hours=1))], note='')
+        else:
+            value = AIPlanner().generate(PlanRequest(text=addition, timezone=request.timezone), [])
+        if value.review or not value.tasks:
+            raise HTTPException(422, 'Уточните дату и время добавляемого события; календарь не изменён.')
+        for event in value.tasks:
+            snapshot = TaskRead(id=uuid4(), **event.model_dump())
+            instruction = Operation(operation='create', target=event.title, scope='occurrence')
+            operations.append({'instruction': instruction.model_dump(), 'timezone': request.timezone,
+                               'candidates': [snapshot.model_dump(mode='json')]})
+        if len(operations) > 30:
+            raise HTTPException(422, 'Слишком много действий. Разделите команду; календарь не изменён.')
+        for item in operations:
+            item['requires_confirmation'] = True
+        command = self.dao.locked(prepared['id'])
+        command.text = request.text
+        command.operations = operations
+        command.note = 'Удалить: ' + ', '.join(item['instruction']['target'] for item in operations
+                                             if item['instruction']['operation'] == 'delete') + '. Добавить: ' + '; '.join(
+            event.title + ' ' + event.start.astimezone(ZoneInfo(request.timezone)).strftime('%d.%m %H:%M')
+            for event in value.tasks) + '. Выберите удаляемую пару и область повторения, затем подтвердите оба действия.'
+        self.session.commit()
+        return {'kind': 'command', 'id': command.id, 'operations': operations, 'note': command.note}
     def prepare_legacy(self,request):
         all_tasks=self.tasks.dao.list()
         parsed=deletion_request(request) or existing_recurrence(request,all_tasks) or interpret(request,list(dict.fromkeys(t.title for t in all_tasks))[:200])
