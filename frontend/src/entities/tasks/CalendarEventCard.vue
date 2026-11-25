@@ -47,5 +47,5 @@ watch(() => [props.task.title, props.task.start, props.task.end], () => nextTick
 .event-title-text{display:block;overflow-wrap:anywhere;line-height:inherit}
 .calendar-event-card .calendar-event-time{display:block;flex:0 0 12px;font-size:10px;line-height:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0}
 .calendar-event.calendar-event-card.compact-event{padding-top:1px;padding-bottom:1px;gap:0}
-@media(max-width:760px){.calendar-event-card .calendar-event-title{font-size:12px;line-height:15px}.calendar-event-card .calendar-event-time{font-size:9px}}
+@media(max-width:760px){.calendar-event.calendar-event-card{border-left:0!important}.calendar-event-card .calendar-event-title{font-size:12px;line-height:15px}.calendar-event-card .calendar-event-time{font-size:9px}}
 </style>
