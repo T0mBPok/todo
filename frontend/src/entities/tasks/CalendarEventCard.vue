@@ -38,7 +38,7 @@ watch(() => [props.task.title, props.task.start, props.task.end], () => nextTick
   <button ref="card" type="button" class="calendar-event calendar-event-card"
     :class="{'compact-event':compact}" :style="{'--event-title-height':titleHeight}"
     :title="tooltip" :aria-label="tooltip" @click.stop="emit('open',$event)">
-    <strong v-show="titleHeight!=='0px'" class="calendar-event-title"><span ref="titleText" class="event-title-text"><span v-if="task.is_fixed" aria-label="Нельзя переносить">🔒 </span><span v-if="task.recurrence" aria-label="Повторяющееся событие">↻ </span>{{ task.title }}</span></strong>
+    <strong v-show="titleHeight!=='0px'" class="calendar-event-title"><span ref="titleText" class="event-title-text"><span v-if="task.is_fixed" aria-label="Нельзя переносить">🔒 </span>{{ task.title }}</span></strong>
     <span ref="timeLabel" class="calendar-event-time">{{ time(task.start) }} – {{ time(task.end) }}</span>
   </button>
 </template>
@@ -48,5 +48,5 @@ watch(() => [props.task.title, props.task.start, props.task.end], () => nextTick
 .event-title-text{display:block;overflow-wrap:anywhere;line-height:inherit}
 .calendar-event-card .calendar-event-time{display:block;flex:0 0 12px;font-size:10px;line-height:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0}
 .calendar-event.calendar-event-card.compact-event{padding-top:1px;padding-bottom:1px;gap:0}
-@media(max-width:760px){.calendar-event.calendar-event-card{border-left:0!important;padding:1px 2px;gap:0}.calendar-event-card .calendar-event-title{font-size:12px;line-height:15px}.calendar-event-card .calendar-event-time{display:none}}
+@media(max-width:760px){.calendar-event.calendar-event-card{border-left:0!important;padding:2px 4px;gap:0}.calendar-event.calendar-event-card.compact-event{padding-top:1px;padding-bottom:1px}.calendar-event-card .calendar-event-title{font-size:12px;line-height:15px}.calendar-event-card .calendar-event-time{display:none}}
 </style>

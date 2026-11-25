@@ -220,7 +220,7 @@ function slotClick(event,day) {
         <div class="month-weekdays"><span v-for="w in ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']" :key="w">{{ w }}</span></div>
         <div class="month-grid"><div v-for="d in panel.cells" :key="dateKey(d)" :class="['month-cell',{'outside':d.getMonth()!==panel.month.getMonth()}]" @dblclick="add(dateKey(d))">
           <button :class="['month-date',{'today':dateKey(d)===today}]" @click="emit('update:day',dateKey(d));emit('view-day')">{{ d.getDate() }}</button>
-          <template v-for="task in eventsOnDay(tasks,dateKey(d))" :key="task.occurrence_id||task.id"><TodoCalendarItem v-if="task.entity==='todo'" :task="task" compact @open="previewTodo" @complete="completeTodo"/>          <button v-else :class="['month-event',color(task)]" @click="preview(task, $event)"><i></i><span class="calendar-event-time">{{ task.is_all_day ? 'Весь день' : time(task.start) }}</span><strong><span v-if="task.is_fixed" aria-label="Нельзя переносить">🔒 </span><span v-if="task.recurrence" aria-label="Повторяющееся событие">↻ </span>{{ task.title }}</strong></button></template>
+          <template v-for="task in eventsOnDay(tasks,dateKey(d))" :key="task.occurrence_id||task.id"><TodoCalendarItem v-if="task.entity==='todo'" :task="task" compact @open="previewTodo" @complete="completeTodo"/>          <button v-else :class="['month-event',color(task)]" @click="preview(task, $event)"><i></i><span class="calendar-event-time">{{ task.is_all_day ? 'Весь день' : time(task.start) }}</span><strong><span v-if="task.is_fixed" aria-label="Нельзя переносить">🔒 </span>{{ task.title }}</strong></button></template>
         </div></div>
       </div>
     </div>
