@@ -26,21 +26,35 @@ export function eventPosition(task, day) {
   return { top: minute(start)/1440*100+'%', height: Math.max(1.15, ((+end===+next?1440:minute(end))-minute(start))/1440*100)+'%' }
 }
 
-export function positionedEvents(tasks, day) {
+export function positionedEvents(tasks, day, options = {}) {
   const result = []
   let group = [], columns = [], groupEnd = -Infinity
   function finishGroup() {
-    for (const item of group) {
+    const dayStart = +fromKey(day)
+    const scale = options.pixelsPerMinute || 64 / 60
+    const canStack = group.every((item, index) => group.slice(0, index).every(previous => {
+      if (item.start >= previous.end || item.end <= previous.start) return true
+      const distance = (Math.max(item.start, dayStart) - Math.max(previous.start, dayStart)) / 60000 * scale
+      return distance >= (options.headerHeight?.(previous.task) || 64)
+    }))
+    for (const [layer, item] of group.entries()) {
       const style = eventPosition(item.task, day)
       let span = 1
       // Use any empty columns to the right until another overlapping card.
       while (item.column + span < columns.length && !columns[item.column + span].some(other =>
         item.start < other.end && item.end > other.start)) span++
-      if (columns.length > 1) {
+      if (columns.length > 1 && canStack) {
+        // Keep cards nearly full-width; leave a visible edge for each layer.
+        // Cap the total inset on narrow screens and very crowded days.
+        style.left = item.column === 0 ? '3px' : 'calc(3px + min(' + (10 * item.column) + 'px, ' + (45 * item.column / (columns.length - 1)) + '%))'
+        style.right = '3px'
+        style['--event-stack'] = layer + 2
+      } else if (columns.length > 1) {
+        // Nearby headings must remain readable: use separate columns.
         style.left = 'calc(' + (100 * item.column / columns.length) + '% + 3px)'
         style.right = 'calc(' + (100 * (columns.length - item.column - span) / columns.length) + '% + 3px)'
       }
-      result.push({task:item.task, style, column:item.column, columns:columns.length, span})
+      result.push({task:item.task, style, column:item.column, columns:columns.length, span, stacked:columns.length > 1 && canStack})
     }
   }
   const items = eventsOnDay(tasks, day).sort((a,b) =>

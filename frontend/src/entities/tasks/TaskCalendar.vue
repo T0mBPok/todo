@@ -4,14 +4,15 @@ import { dateKey, fromKey, addDays, monthDays, eventsOnDay, positionedEvents } f
 import { createCalendarWindow, calendarWindowRange, calendarScrollPosition, shiftCalendarDate } from '../../shared/calendarScroll'
 import TodoCalendarItem from '../todos/TodoCalendarItem.vue'
 import TodoEditor from '../todos/TodoEditor.vue'
+import TodoDetails from '../todos/TodoDetails.vue'
 import {request} from '../../shared/api.js'
 import {errorMessage} from '../../shared/errors.js'
 import CalendarEventEditor from './CalendarEventEditor.vue'
 import CalendarEventCard from './CalendarEventCard.vue'
 const props = defineProps({ tasks: {type:Array,default:()=>[]}, day: String, view: {type:String,default:'week'} })
 const emit = defineEmits(['range-change','refresh','error','update:day','view-day','select-task'])
-const todoEditor=ref(null), completing=ref(new Set())
-const eventEditor = ref(null), grid = ref(null), now = ref(new Date())
+const todoDetails=ref(null), todoEditor=ref(null), completing=ref(new Set())
+const eventEditor = ref(null), grid = ref(null), timeGrid = ref(null), eventHeaders = ref({}), now = ref(new Date())
 const viewportWidth = ref(800), gutterWidth = ref(64), horizontalPosition = ref(0)
 const windowState = ref(createCalendarWindow(props.day, props.view))
 const unitWidth = computed(() => props.view === 'month' ? viewportWidth.value :
@@ -28,6 +29,17 @@ const months = computed(() => Array.from({length:windowState.value.length}, (_, 
   const month = shiftCalendarDate(windowState.value.start, i, 'month')
   return { key: dateKey(month), month, cells: monthDays(month) }
 }))
+function eventHeaderKey(day,task) { return day+':'+(task.occurrence_id||task.id) }
+function measureHeader(day,task,height) {
+  const key=eventHeaderKey(day,task)
+  if(eventHeaders.value[key]!==height)eventHeaders.value={...eventHeaders.value,[key]:height}
+}
+function dayEvents(day) {
+  return positionedEvents(timedTasks.value,day,{
+    pixelsPerMinute:timeGrid.value?.offsetHeight/1440 || 64/60,
+    headerHeight:task=>eventHeaders.value[eventHeaderKey(day,task)] || 64
+  })
+}
 const timedTasks = computed(() => props.tasks.filter(task => !task.is_all_day))
 const allDayTasks = computed(() => props.tasks.filter(task => task.is_all_day))
 const allDayColumns = computed(() => days.value.map(day => eventsOnDay(allDayTasks.value, dateKey(day))))
@@ -45,9 +57,14 @@ const weekday=d=>d.toLocaleDateString('ru-RU',{weekday:'short'}).replace('.','')
 function color(task) { let hash=0; for(const c of task.title) hash+=c.charCodeAt(0); return ['blue','green','purple','orange'][hash%4] }
 function preview(task, event) {
   if (Date.now() < suppressClickUntil) return
-  if(task.entity==='todo'){todoEditor.value.open(task);return}
+  if(task.entity==='todo'){previewTodo(task);return}
   emit('select-task', task)
   eventEditor.value.preview(task, event.currentTarget)
+}
+
+function previewTodo(task) {
+  if (window.matchMedia('(max-width:760px)').matches) todoDetails.value.open(task)
+  else todoEditor.value.open(task)
 }
 
 async function completeTodo(task) {
@@ -185,14 +202,14 @@ function slotClick(event,day) {
       <div v-if="showAllDay" class="all-day-grid">
         <span class="all-day-label">Весь день</span>
         <div v-for="(column, index) in allDayColumns" :key="dateKey(days[index])" class="all-day-column">
-          <template v-for="task in column" :key="task.id"><TodoCalendarItem v-if="task.entity==='todo'" :task="task" compact @open="todoEditor.open" @complete="completeTodo"/><button v-else :class="['month-event',color(task)]" :title="task.title" @click="preview(task,$event)"><strong>{{ task.title }}</strong></button></template>
+          <template v-for="task in column" :key="task.id"><TodoCalendarItem v-if="task.entity==='todo'" :task="task" compact @open="previewTodo" @complete="completeTodo"/><button v-else :class="['month-event',color(task)]" :title="task.title" @click="preview(task,$event)"><strong>{{ task.title }}</strong></button></template>
         </div>
       </div>
-      <div class="time-grid">
+      <div ref="timeGrid" class="time-grid">
         <div class="hour-labels"><span v-for="hour in 23" :key="hour" :style="{top:hour/24*100+'%'}">{{ String(hour).padStart(2,'0') }}:00</span></div>
         <div v-for="d in days" :key="dateKey(d)" :class="['day-column',{'weekend':d.getDay()===0||d.getDay()===6}]" @click="slotClick($event,d)">
           <div v-for="hour in 24" :key="hour" class="hour-line" :style="{top:(hour-1)/24*100+'%'}"></div>
-          <template v-for="{task,style} in positionedEvents(timedTasks,dateKey(d))" :key="task.occurrence_id||task.id"><TodoCalendarItem v-if="task.entity==='todo'" class="calendar-event calendar-todo-position" :task="task" :style="style" @open="todoEditor.open" @complete="completeTodo"/>          <CalendarEventCard v-else :task="task" :data-category="task.category" :class="color(task)" :style="style" @open="preview(task,$event)"/></template>
+          <template v-for="{task,style} in dayEvents(dateKey(d))" :key="task.occurrence_id||task.id"><TodoCalendarItem v-if="task.entity==='todo'" class="calendar-event calendar-todo-position" :task="task" :style="style" @open="previewTodo" @complete="completeTodo"/>          <CalendarEventCard v-else :task="task" :data-category="task.category" :class="color(task)" :style="style" @open="preview(task,$event)" @header-size="measureHeader(dateKey(d),task,$event)"/></template>
           <div v-if="dateKey(d)===today" class="now-line" :style="{top:(now.getHours()*60+now.getMinutes())/1440*100+'%'}"><i></i></div>
         </div>
       </div>
@@ -203,12 +220,13 @@ function slotClick(event,day) {
         <div class="month-weekdays"><span v-for="w in ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']" :key="w">{{ w }}</span></div>
         <div class="month-grid"><div v-for="d in panel.cells" :key="dateKey(d)" :class="['month-cell',{'outside':d.getMonth()!==panel.month.getMonth()}]" @dblclick="add(dateKey(d))">
           <button :class="['month-date',{'today':dateKey(d)===today}]" @click="emit('update:day',dateKey(d));emit('view-day')">{{ d.getDate() }}</button>
-          <template v-for="task in eventsOnDay(tasks,dateKey(d))" :key="task.occurrence_id||task.id"><TodoCalendarItem v-if="task.entity==='todo'" :task="task" compact @open="todoEditor.open" @complete="completeTodo"/>          <button v-else :class="['month-event',color(task)]" @click="preview(task, $event)"><i></i><span class="calendar-event-time">{{ task.is_all_day ? 'Весь день' : time(task.start) }}</span><strong><span v-if="task.is_fixed" aria-label="Нельзя переносить">🔒 </span><span v-if="task.recurrence" aria-label="Повторяющееся событие">↻ </span>{{ task.title }}</strong></button></template>
+          <template v-for="task in eventsOnDay(tasks,dateKey(d))" :key="task.occurrence_id||task.id"><TodoCalendarItem v-if="task.entity==='todo'" :task="task" compact @open="previewTodo" @complete="completeTodo"/>          <button v-else :class="['month-event',color(task)]" @click="preview(task, $event)"><i></i><span class="calendar-event-time">{{ task.is_all_day ? 'Весь день' : time(task.start) }}</span><strong><span v-if="task.is_fixed" aria-label="Нельзя переносить">🔒 </span><span v-if="task.recurrence" aria-label="Повторяющееся событие">↻ </span>{{ task.title }}</strong></button></template>
         </div></div>
       </div>
     </div>
     </div>
   </section>
+  <TodoDetails ref="todoDetails" @saved="savedTodo" @edit="todoEditor.open($event)"/>
   <TodoEditor ref="todoEditor" @saved="savedTodo"/>
   <CalendarEventEditor ref="eventEditor" @refresh="emit('refresh')" />
 </template>
@@ -219,6 +237,8 @@ function slotClick(event,day) {
 .calendar-todo-position{min-height:32px;padding:5px 7px;text-align:left;}
 .continuous-calendar-scroll { flex:1; min-height:0; overflow:auto; overscroll-behavior-x:contain; touch-action:auto; overflow-anchor:none; }
 .calendar-timeline { position:relative; }
+.day-column { isolation:isolate; }
+.day-column :deep(.calendar-event) { z-index:var(--event-stack,2); }
 .calendar-timeline .week-heading,.calendar-timeline .time-grid,.calendar-timeline .all-day-grid {
   display:grid; grid-template-columns:var(--gutter-width) repeat(var(--days),var(--column-width));
 }

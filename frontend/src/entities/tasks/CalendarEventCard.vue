@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { categoryLabel } from '../../shared/categories.js'
 const props = defineProps({ task: {type:Object, required:true} })
-const emit = defineEmits(['open'])
+const emit = defineEmits(['open','header-size'])
 const card = ref(null), titleText = ref(null), timeLabel = ref(null)
 const titleHeight = ref('0px'), compact = ref(false)
 const time = value => new Date(value).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})
@@ -19,6 +19,9 @@ function measure() {
   compact.value = card.value.clientHeight < 28
   const lines = Math.max(0, Math.floor((available - timeHeight - 2) / line))
   titleHeight.value = lines * line + 'px'
+  const visibleTitle = Math.min(titleText.value.getBoundingClientRect().height, lines * line)
+  emit('header-size', Math.ceil(parseFloat(css.paddingTop) + visibleTitle + timeHeight +
+    (visibleTitle ? 2 : 0) + parseFloat(css.paddingBottom) + 2))
 }
 onMounted(() => {
   observer = new ResizeObserver(measure)

@@ -37,7 +37,7 @@ test('all-day events stay on their calendar dates', () => {
   assert.deepEqual(eventsOnDay([event], '2026-10-18'), [event])
   assert.deepEqual(eventsOnDay([event], '2026-10-19'), [])
 })
-test('overlapping timed events use separate columns', () => {
+test('nearby overlapping starts keep their headings in separate columns', () => {
   const event = (start, end) => ({start: '2026-10-17T' + start, end: '2026-10-17T' + end})
   const cards = positionedEvents([event('09:00', '10:00'), event('09:30', '11:00'), event('11:00', '12:00')], '2026-10-17')
   assert.notEqual(cards[0].style.left, cards[1].style.left)
@@ -76,4 +76,49 @@ test('equal-start events have a stable layout regardless of API response order',
   const layout=items=>positionedEvents(items,'2026-11-26').map(card=>[card.task.id,card.column])
   assert.deepEqual(layout(tasks),layout([...tasks].reverse()))
   assert.equal(layout(tasks)[0][0],'long')
+})
+
+
+test('a shorter overlapping event layers over the full-width long event', () => {
+  const tasks = [
+    {id:'long',start:'2026-11-26T08:00:00',end:'2026-11-26T17:30:00'},
+    {id:'short',start:'2026-11-26T17:00:00',end:'2026-11-26T18:00:00'}
+  ]
+  const [back, front] = positionedEvents(tasks,'2026-11-26')
+  assert.equal(back.style.left,'3px')
+  assert.equal(front.style.left,'calc(3px + min(10px, 45%))')
+  assert.equal(front.style.right,back.style.right)
+  assert.ok(front.style['--event-stack']>back.style['--event-stack'])
+  assert.equal(front.style.top,eventPosition(tasks[1],'2026-11-26').top)
+  assert.equal(back.style.height,eventPosition(tasks[0],'2026-11-26').height)
+})
+
+test('simultaneous events remain side by side so every heading stays visible', () => {
+  const tasks = Array.from({length:12},(_,id)=>({id:String(id).padStart(2,'0'),
+    start:'2026-11-26T10:00:00',end:'2026-11-26T11:00:00'}))
+  const cards = positionedEvents(tasks,'2026-11-26')
+  assert.equal(cards.every(card=>!card.stacked),true)
+  assert.equal(new Set(cards.map(card=>card.style.left)).size,12)
+  assert.deepEqual(cards,positionedEvents([...tasks].reverse(),'2026-11-26'))
+})
+
+
+test('overlap is allowed only below the rendered title and time', () => {
+  const tasks = [
+    {id:'long',start:'2026-11-26T09:00:00',end:'2026-11-26T11:00:00'},
+    {id:'short',start:'2026-11-26T09:45:00',end:'2026-11-26T10:30:00'}
+  ]
+  const safe = positionedEvents(tasks,'2026-11-26',{pixelsPerMinute:1,headerHeight:()=>40})
+  assert.equal(safe.every(card=>card.stacked),true)
+  const protectedTitle = positionedEvents(tasks,'2026-11-26',{pixelsPerMinute:1,headerHeight:()=>60})
+  assert.equal(protectedTitle.every(card=>!card.stacked),true)
+  assert.notEqual(protectedTitle[0].style.right,protectedTitle[1].style.right)
+})
+
+test('overnight cards protect the header at the visible day boundary', () => {
+  const tasks = [
+    {id:'night',start:'2026-11-25T20:00:00',end:'2026-11-26T04:00:00'},
+    {id:'early',start:'2026-11-26T00:15:00',end:'2026-11-26T01:00:00'}
+  ]
+  assert.equal(positionedEvents(tasks,'2026-11-26').every(card=>!card.stacked),true)
 })
