@@ -347,3 +347,10 @@ input:focus,select:focus,textarea:focus { border-color:#c9ab98; }
   .calendar-sidebar { left:auto; }
   .sidebar-scrim { left:256px; }
 }
+
+@media(max-width:760px) {
+  .app-content,.app-content.sidebar-collapsed { padding:0; gap:0; }
+  .calendar-with-suggestions { width:100%; min-height:0; overflow:hidden; }
+  .calendar-with-suggestions>section,.calendar-with-suggestions>.task-calendar { min-height:0; }
+  .calendar-workspace { border-left:0; border-right:0; border-radius:0; box-shadow:none; }
+}

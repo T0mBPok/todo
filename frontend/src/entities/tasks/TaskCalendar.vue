@@ -256,4 +256,13 @@ function slotClick(event,day) {
 .month-panel-title { flex-shrink:0; text-align:center; padding:10px; text-transform:capitalize; font-size:12px; color:var(--muted); }
 .calendar-month-panel .month-grid { overflow:visible; min-height:0; grid-template-rows:repeat(6,minmax(0,1fr)); }
 .calendar-month-panel .month-cell { overflow:auto; }
+@media(max-width:760px) {
+  .continuous-calendar-scroll,.calendar-month-panel .month-cell { scrollbar-width:none!important; }
+  .continuous-calendar-scroll::-webkit-scrollbar,.calendar-month-panel .month-cell::-webkit-scrollbar { display:none; width:0; height:0; }
+  .calendar-timeline .timezone-label,.calendar-timeline .hour-labels,.all-day-label { background:#f0eae4; }
+  .calendar-timeline .hour-labels>span { left:0; right:0; text-align:center; }
+  .all-day-label { text-align:center; padding:2px; line-height:1.15; }
+  .all-day-column { padding:1px 2px; }
+  .month-event .calendar-event-time { display:none; }
+}
 </style>
