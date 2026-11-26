@@ -5,7 +5,7 @@ import { errorMessage } from '../../shared/errors.js'
 import { useVoiceInput } from '../../features/voice/useVoiceInput.js'
 import MicIcon from '../../features/voice/MicIcon.vue'
 import TodoEditor from './TodoEditor.vue'
-import { todoScheduleLabel } from './calendar.js'
+import { todoScheduleLabel, todoDeadlineLabel } from './calendar.js'
 const emit=defineEmits(['changed'])
 const text=ref(''),message=ref(''),busy=ref(false),draft=ref(null),history=ref([]),saved=ref([]),editor=ref(null)
 const {supported,listening,starting,processing,toggle,cancel,recordSeconds,audioUrl,rawTranscript}=useVoiceInput({text,onComplete:prepare,onError:value=>message.value=value})
@@ -29,8 +29,8 @@ function edited(todo){emit('changed',todo?[todo]:[]);saved.value=[];message.valu
 <button v-if="listening||starting||processing" class="link" @click="cancel">Отменить запись</button>
 <form @submit.prevent="prepare"><label>Что нужно сделать?<textarea class="voice-command-text" v-model="text" rows="6" maxlength="6000" :disabled="busy||listening||starting||processing" placeholder="Можно продиктовать или написать. Например: купить продукты завтра."></textarea></label><button class="primary-button" :disabled="busy||listening||starting||processing||!text.trim()">{{ busy?'Обрабатываю…':'Добавить задачи' }}</button></form>
 <p v-if="message" role="status" class="todo-message">{{ message }}</p>
-<section v-if="draft" class="todo-confirm"><h3>Проверь изменения</h3><article v-for="(op,i) in draft.operations" :key="i"><strong>{{ {create:'Добавить',update:'Изменить',delete:'Удалить',complete:'Выполнить',reopen:'Вернуть в работу'}[op.action.action] }}: {{ op.action.title||op.snapshot?.title }}</strong><small>{{ todoScheduleLabel(op.schedule||op.snapshot||{}) }}</small></article><button class="primary-button" :disabled="busy" @click="execute">Подтвердить</button><button class="outline-button" :disabled="busy" @click="draft=null">Отмена</button></section>
-<div v-if="saved.length" class="todo-voice-results"><article v-for="task in saved" :key="task.id"><div><strong>{{ task.title }}</strong><small>{{ todoScheduleLabel(task) }}</small></div><button class="icon-button" :aria-label="'Изменить '+task.title" @click="editor.open(task)">✎</button></article></div>
+<section v-if="draft" class="todo-confirm"><h3>Проверь изменения</h3><article v-for="(op,i) in draft.operations" :key="i"><strong>{{ {create:'Добавить',update:'Изменить',delete:'Удалить',complete:'Выполнить',reopen:'Вернуть в работу'}[op.action.action] }}: {{ op.action.title||op.snapshot?.title }}</strong><small>{{ todoScheduleLabel(op.schedule||op.snapshot||{}) }}</small><small v-if="op.deadline?.deadline_date">Дедлайн: {{ todoDeadlineLabel(op.deadline) }}</small></article><button class="primary-button" :disabled="busy" @click="execute">Подтвердить</button><button class="outline-button" :disabled="busy" @click="draft=null">Отмена</button></section>
+<div v-if="saved.length" class="todo-voice-results"><article v-for="task in saved" :key="task.id"><div><strong>{{ task.title }}</strong><small>{{ todoScheduleLabel(task) }}</small><small v-if="task.deadline_date">Дедлайн: {{ todoDeadlineLabel(task) }}</small></div><button class="icon-button" :aria-label="'Изменить '+task.title" @click="editor.open(task)">✎</button></article></div>
 <details v-if="audioUrl||rawTranscript"><summary>Запись и расшифровка</summary><audio v-if="audioUrl" :src="audioUrl" controls></audio><p>{{ rawTranscript }}</p></details>
 <TodoEditor ref="editor" @saved="edited"/>
 </section></template>

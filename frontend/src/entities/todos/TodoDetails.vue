@@ -3,7 +3,7 @@ import { ref, nextTick } from 'vue'
 import { request } from '../../shared/api.js'
 import { errorMessage } from '../../shared/errors.js'
 import { categoryLabel } from '../../shared/categories.js'
-import { todoDisplayTitle, todoScheduleLabel } from './calendar.js'
+import { todoDisplayTitle, todoScheduleLabel, todoDeadlineLabel, todoOverdue } from './calendar.js'
 
 const emit = defineEmits(['saved', 'edit'])
 const dialog = ref(null), task = ref(null), busy = ref(false), error = ref('')
@@ -38,6 +38,7 @@ defineExpose({open})
       <header><span>ЗАДАЧА</span><button type="button" class="icon-button" aria-label="Закрыть задачу" :disabled="busy" @click="close">×</button></header>
       <h2 id="todo-details-title">{{ todoDisplayTitle(task) }}</h2>
       <p class="todo-details-schedule">{{ todoScheduleLabel(task) }}</p>
+      <p v-if="task.deadline_date" :class="{'todo-details-error':todoOverdue(task)}">{{ todoOverdue(task)?'Просрочено · ':'' }}Дедлайн: {{ todoDeadlineLabel(task) }}</p>
       <p class="todo-details-priority">{{ categoryLabel(task.category) }}</p>
       <p v-if="task.description" class="todo-details-description">{{ task.description }}</p>
       <p v-if="task.completed" class="todo-details-status">✓ Задача выполнена</p>

@@ -8,6 +8,7 @@ from app.plans.ai import parse_plan
 from test_mixed_numeric_calendar import seed_numeric
 
 SOURCE='Удали с среды повторяющееся событие 1С. Добавь на завтра, 25-го, на 13:15 ТПО.'
+pytestmark=pytest.mark.usefixtures('november24_clock')
 
 def model_plan(end):
     task={'title':'ТПО','start':'2026-11-25T13:15:00+07:00'}

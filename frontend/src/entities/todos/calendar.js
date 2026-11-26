@@ -30,3 +30,20 @@ export function todoDisplayTitle(todo) {
   if(todo.scheduled_at){const prefix=title.replace(new RegExp('\\s+(?:в|на)\\s+'+clock+'[.!]?$', 'i'),'').trim();if(prefix)title=prefix}
   return title
 }
+
+export function todoDeadlineLabel(todo) {
+  if (!todo.deadline_date) return ''
+  const point = todo.deadline_at ? new Date(todo.deadline_at) : fromKey(todo.deadline_date)
+  return point.toLocaleDateString('ru-RU', {day:'numeric',month:'short'}) +
+    (todo.deadline_at ? ' · ' + point.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}) : '')
+}
+
+export function todoOverdue(todo, now = new Date()) {
+  if (todo.completed || !todo.deadline_date) return false
+  if (todo.deadline_at) return +new Date(todo.deadline_at) < +now
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en', {
+    timeZone: todo.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+    year:'numeric',month:'2-digit',day:'2-digit'
+  }).formatToParts(now).map(part=>[part.type,part.value]))
+  return `${parts.year}-${parts.month}-${parts.day}` > todo.deadline_date
+}

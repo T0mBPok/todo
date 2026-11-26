@@ -16,12 +16,12 @@ def parse_decision(content):
     if isinstance(value,dict) and isinstance(value.get('actions'),list):
         for index,action in enumerate(value['actions']):
             if not isinstance(action,dict):continue
-            for field,kind in [('scheduled_date',date),('scheduled_at',datetime)]:
+            for field,kind in [('scheduled_date',date),('scheduled_at',datetime),('deadline_date',date),('deadline_at',datetime)]:
                 if action.get(field) is None:continue
                 try:TypeAdapter(kind).validate_python(action[field])
                 except ValidationError as error:
                     action[field]=None
-                    invalid.add(index)
+                    if field.startswith('scheduled_'):invalid.add(index)
                     log_result_rejection('todo_command','invalid_schedule_field',error)
     result=Decision.model_validate(value)
     for index in invalid:result.actions[index]._invalid_schedule=True
@@ -38,6 +38,7 @@ def interpret(text,context,history=None,timezone='Asia/Tomsk'):
     from zoneinfo import ZoneInfo
     prompt+=PRIORITY_RULES+'\nСейчас: '+datetime.now(ZoneInfo(timezone)).isoformat() + '\nЧасовой пояс: ' + timezone
     prompt+=task_extraction_rules()
+    prompt+='\nДедлайн — отдельный крайний срок, а не день выполнения. «На завтра, дедлайн в пятницу» означает scheduled_date=завтра, deadline_date=пятница. «Дедлайн завтра в 18:00» означает deadline_date/deadline_at, scheduled_date/scheduled_at=null, если отдельный день выполнения не назван. deadline_text — дословный фрагмент с дедлайном. «Сдать до пятницы» или «закончить к пятнице» — deadline_text с до/к и deadline_date, а не расписание. clear_deadline=true только при явной просьбе убрать дедлайн. Без просьбы не меняй дедлайн. В title не включай даты и слова дедлайн/крайний срок.'
     schema=Decision.model_json_schema()
     schema['$defs']['Action'].setdefault('required',[]).append('category')
     schema['$defs']['Action']['properties']['ref']={'anyOf':[{'type':'string','enum':[item['ref'] for item in context] or ['NO_TASKS']},{'type':'null'}],'default':None}
@@ -48,7 +49,7 @@ def interpret(text,context,history=None,timezone='Asia/Tomsk'):
                    '{"actions":[{"action":"complete","ref":"T1"}],"note":""}. '
                    'T1 здесь только пример: выбирай реальную ссылку из данных.')
         user_content = ('Существующие задачи (данные): ' + json.dumps(
-            [{key: task[key] for key in ('ref', 'title', 'description', 'category', 'completed', 'scheduled_date', 'scheduled_at', 'timezone')} for task in context],
+            [{key: task.get(key) for key in ('ref', 'title', 'description', 'category', 'completed', 'scheduled_date', 'scheduled_at', 'deadline_date', 'deadline_at', 'timezone')} for task in context],
             ensure_ascii=False, separators=(',', ':'))
             + '\nИстория (данные): ' + json.dumps(history or [], ensure_ascii=False, separators=(',', ':'))
             + '\nПоследняя команда пользователя:\n' + text)

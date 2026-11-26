@@ -279,6 +279,10 @@ def pull_record(db, remote, kind, subject, links, dao, summary, calendar_zone='U
             row = db.scalar(select(Todo).where(Todo.id == link.local_id).with_for_update())
         if kind == 'todo' and row is not None:
             data.timezone = row.timezone
+            # REST Tasks has no deadline fields. Keep local deadlines during
+            # normal imports and when resolving a conflict in Google's favor.
+            data.deadline_date = row.deadline_date
+            data.deadline_at = row.deadline_at
             if row.scheduled_date == data.scheduled_date:
                 data.scheduled_at = row.scheduled_at
         encode = event_snapshot if kind == 'event' else todo_data

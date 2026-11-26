@@ -12,5 +12,7 @@ class Todo(Owned, Base):
     completed: Mapped[bool]=mapped_column(Boolean,default=False)
     scheduled_date: Mapped[date|None]=mapped_column(Date,nullable=True,index=True)
     scheduled_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True)
+    deadline_date: Mapped[date|None]=mapped_column(Date,nullable=True,index=True)
+    deadline_at: Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True)
     timezone: Mapped[str]=mapped_column(Text,default='Asia/Tomsk',server_default='Asia/Tomsk')
     created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))

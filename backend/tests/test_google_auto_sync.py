@@ -445,3 +445,18 @@ def test_local_conflict_choice_and_remote_restore_keep_nondefault_list(exchange)
     assert run()['changed'] == 0
     with AccountSessionLocal(info={'owner_id': owner}) as db:
         assert db.scalar(select(GoogleLink).where(GoogleLink.kind == 'todo')).task_list_id == 'work'
+
+
+def test_google_rest_edits_preserve_local_deadlines(exchange):
+    alice,bob,google,owner,run=exchange
+    local=alice.post('/api/todos',json={'title':'Отчёт','scheduled_date':'2098-12-04',
+        'deadline_date':'2098-12-07','deadline_at':'2098-12-07T18:00:00+07:00'}).json()
+    assert run()['changed']==1
+    key=next(iter(google.records['todo']))
+    assert 'deadline_date' not in google.records['todo'][key]
+    google.add('todo',key,title='Отчёт из Google',status='needsAction',due='2098-12-05T00:00:00Z')
+    assert run()['changed']==1
+    saved=alice.get('/api/todos').json()[0]
+    assert saved['scheduled_date']=='2098-12-05'
+    assert saved['deadline_date']==local['deadline_date']
+    assert saved['deadline_at']==local['deadline_at']

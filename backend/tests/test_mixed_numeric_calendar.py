@@ -10,6 +10,7 @@ from app.commands.schemas import CommandRequest
 from app.tasks.service import TaskService
 
 SOURCE = 'Со среды убери повторяющуюся пару 1С. На завтра, на среду, 25-е, поставь на 13:15 ПО.'
+pytestmark=pytest.mark.usefixtures('november24_clock')
 
 
 def seed_numeric(api, title='1С'):

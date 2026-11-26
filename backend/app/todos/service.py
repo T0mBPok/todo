@@ -7,7 +7,8 @@ from sqlalchemy import select
 from app.todos.dao import TodoDAO
 from app.todos.schemas import TodoInput,TodoRead
 from app.todos.ai import interpret
-from app.todos.scheduling import grounded_schedule, task_fragment, clean_scheduled_title
+from app.todos.scheduling import grounded_schedule, task_fragment, clean_scheduled_title, DATE_TOKEN
+from app.todos.deadlines import deadline_parts
 from pydantic import ValidationError
 from app.commands.models import Command
 from app.tasks.service import calendar_lock
@@ -49,10 +50,16 @@ class TodoService:
         for action in result.actions:
             snapshot=None
             schedule=None
+            deadline=None
             if action.action in {'create','update'}:
                 fragment=action.schedule_text or ''
                 literal=' '.join(fragment.lower().split()) in ' '.join(data.text.lower().split())
                 source=(data.text if len(schedule_actions)==1 else task_fragment(data.text,action.title or '')) or (fragment if literal else '')
+                source,deadline,deadline_uncertain=deadline_parts(action,source,data.timezone)
+                schedule_review=schedule_review or deadline_uncertain
+                if deadline is not None and not DATE_TOKEN.search(source):
+                    action=action.model_copy(update={'scheduled_date':None,'scheduled_at':None,'schedule_text':None})
+                    action._invalid_schedule=False
                 if action.action=='create' or action.scheduled_date or action.scheduled_at or action.clear_schedule or action.clear_time or action.schedule_text:
                     schedule, uncertain=grounded_schedule(action,source,data.timezone)
                     schedule_review=schedule_review or uncertain
@@ -60,12 +67,12 @@ class TodoService:
                 if action.title:action.title=clean_scheduled_title(action.title,schedule)
                 if not action.title:raise HTTPException(502,'Модель не указала название задачи.')
                 if not action.title.strip():raise HTTPException(502,'Модель вернула пустое название задачи.')
-                TodoInput(title=action.title,description=action.description or '',**(schedule or {}))
+                TodoInput(title=action.title,description=action.description or '',**{**(schedule or {}),**(deadline or {})})
             else:
                 if action.ref not in mapping:raise HTTPException(502,'Модель выбрала задачу вне списка. Ничего не изменено.')
                 if action.ref in seen:raise HTTPException(422,'Несколько изменений одной задачи: уточните итоговый результат.')
                 seen.add(action.ref);snapshot=TodoRead.model_validate(mapping[action.ref]).model_dump(mode='json')
-                if action.action=='update' and action.title is None and action.description is None and action.category is None and schedule is None:raise HTTPException(422,'Уточните, что изменить в задаче.')
+                if action.action=='update' and action.title is None and action.description is None and action.category is None and schedule is None and deadline is None:raise HTTPException(422,'Уточните, что изменить в задаче.')
             if action.action=='update' and schedule is not None and not action.clear_schedule:
                 if action.clear_time:
                     schedule['scheduled_at']=None
@@ -74,7 +81,7 @@ class TodoService:
                     previous=datetime.fromisoformat(snapshot['scheduled_at']).astimezone(ZoneInfo(data.timezone))
                     day=schedule['scheduled_date']
                     schedule['scheduled_at']=previous.replace(year=day.year,month=day.month,day=day.day)
-            operations.append({'entity':'todo','action':action.model_dump(mode='json'),'snapshot':snapshot,'schedule':TodoInput(title=action.title or (snapshot or {}).get('title','Задача'), **schedule).model_dump(mode='json', include={'scheduled_date','scheduled_at','timezone'}) if schedule is not None else None})
+            operations.append({'entity':'todo','action':action.model_dump(mode='json'),'snapshot':snapshot,'deadline':TodoInput(title=action.title or (snapshot or {}).get('title','Задача'), **deadline).model_dump(mode='json', include={'deadline_date','deadline_at','timezone'}) if deadline is not None else None,'schedule':TodoInput(title=action.title or (snapshot or {}).get('title','Задача'), **schedule).model_dump(mode='json', include={'scheduled_date','scheduled_at','timezone'}) if schedule is not None else None})
         note=re.sub(r'\bT\d+\b',lambda match:'«'+mapping[match.group()].title+'»' if match.group() in mapping else '',result.note)
         command=Command(text=data.text,status='draft',operations=operations,note=note)
         self.session.add(command);self.session.commit()
@@ -88,7 +95,7 @@ class TodoService:
         try:
             for op in command.operations:
                 action=op['action'];snapshot=op['snapshot']
-                if action['action']=='create':task=self.dao.add(TodoInput(title=action['title'],description=action['description'] or '',category=action.get('category') or 'important_not_urgent',**(op.get('schedule') or {})))
+                if action['action']=='create':task=self.dao.add(TodoInput(title=action['title'],description=action['description'] or '',category=action.get('category') or 'important_not_urgent',**{**(op.get('schedule') or {}),**(op.get('deadline') or {})}))
                 else:
                     task=self.require(UUID(snapshot['id']))
                     if TodoRead.model_validate(task).model_dump(mode='json')!=snapshot:raise HTTPException(409,'Задача уже изменилась. Повторите команду.')
@@ -102,6 +109,9 @@ class TodoService:
                         if op.get('schedule') is not None:
                             values=TodoInput(title=task.title,**op['schedule'])
                             task.scheduled_date=values.scheduled_date;task.scheduled_at=values.scheduled_at;task.timezone=values.timezone
+                        if op.get('deadline') is not None:
+                            values=TodoInput(title=task.title,**op['deadline'])
+                            task.deadline_date=values.deadline_date;task.deadline_at=values.deadline_at
                 changed.append(TodoRead.model_validate(task).model_dump(mode='json'))
             result={'note':'Готово. Список задач обновлён.','tasks':changed}
             command.status='executed';command.result=result;self.session.commit();return result

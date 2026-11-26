@@ -13,6 +13,8 @@ class TodoInput(BaseModel):
     completed: bool=False
     scheduled_date: date|None=None
     scheduled_at: AwareDatetime|None=None
+    deadline_date: date|None=None
+    deadline_at: AwareDatetime|None=None
     timezone: str='Asia/Tomsk'
 
     @field_validator('timezone')
@@ -28,6 +30,12 @@ class TodoInput(BaseModel):
                 raise ValueError('Дата и время задачи относятся к разным дням')
             self.scheduled_date = local_day
             self.scheduled_at = self.scheduled_at.astimezone(timezone.utc)
+        if self.deadline_at is not None:
+            deadline_day = self.deadline_at.astimezone(ZoneInfo(self.timezone)).date()
+            if self.deadline_date is not None and self.deadline_date != deadline_day:
+                raise ValueError('Дата и время дедлайна относятся к разным дням')
+            self.deadline_date = deadline_day
+            self.deadline_at = self.deadline_at.astimezone(timezone.utc)
         return self
 class TodoRead(TodoInput):
     model_config=ConfigDict(from_attributes=True)
@@ -44,6 +52,10 @@ class Completion(BaseModel):
 
 class Action(BaseModel):
     _invalid_schedule: bool = PrivateAttr(default=False)
+    deadline_date: date|None=None
+    deadline_at: datetime|None=None
+    deadline_text: str|None=Field(default=None,max_length=1000,description='Дословный фрагмент с крайним сроком, отдельно от даты выполнения.')
+    clear_deadline: bool=False
     scheduled_date: date|None=None
     scheduled_at: datetime|None=None
     schedule_text: str|None=Field(default=None,max_length=1000,description='Точный фрагмент речи с датой и временем только этой задачи; не выдумывай.')
