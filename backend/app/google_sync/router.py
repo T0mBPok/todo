@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.core import config
 from app.core.database import get_session
 from app.google_sync.models import GoogleConnection, GoogleState, GoogleLink
-from app.google_sync.oauth import begin, cipher, complete
+from app.google_sync.oauth import begin, cipher, complete, mcp_configured
 from app.google_sync.service import sync, conflict_records, resolve_conflict
 
 router = APIRouter(prefix='/google', tags=['google'])
@@ -49,6 +49,9 @@ def status(db: DB):
         configured = False
     connection=db.scalar(select(GoogleConnection))
     return {'configured':configured,'connected':connection is not None,
+            'tasks_mcp_configured':mcp_configured(),
+            'tasks_mcp_connected':bool(connection and connection.mcp_refresh_token),
+            'tasks_mcp_migrated':bool(connection and connection.mcp_migrated),
             'auto_sync':bool(connection and connection.sync_enabled),
             'last_synced_at':connection.last_synced_at if connection else None,
             'sync_error':connection.sync_error if connection else None,
@@ -64,6 +67,13 @@ def connect(request: Request, db: DB):
     return {'url': begin(db, request)}
 
 
+@router.post('/tasks-mcp/connect')
+def connect_tasks_mcp(request: Request, db: DB):
+    if request.headers.get('origin') != config.PUBLIC_ORIGIN:
+        raise HTTPException(409, f'Для подключения откройте {config.PUBLIC_ORIGIN}.')
+    return {'url': begin(db, request, provider='tasks_mcp')}
+
+
 def callback(request: Request, db: DB, state: str = Query('', max_length=128),
              code: str = Query('', max_length=2048)):
     try:
@@ -71,7 +81,8 @@ def callback(request: Request, db: DB, state: str = Query('', max_length=128),
             raise HTTPException(400, 'Google не вернул разрешение.')
         complete(db, request, state, code)
     except HTTPException as error:
-        return RedirectResponse('/?google=error&reason=' + ('permissions' if error.status_code == 400 else 'connection'), 303)
+        from urllib.parse import urlencode
+        return RedirectResponse('/?' + urlencode({'google':'error', 'reason': 'permissions' if error.status_code == 400 else 'connection', 'detail':str(error.detail)}), 303)
     return RedirectResponse('/?google=connected', 303)
 
 

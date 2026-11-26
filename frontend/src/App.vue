@@ -50,12 +50,14 @@ onMounted(async () => {
   const url = new URL(window.location.href)
   const callback = url.searchParams.get('google')
   if (callback) {
+    const detail = url.searchParams.get('detail')
     url.searchParams.delete('google')
     url.searchParams.delete('reason')
+    url.searchParams.delete('detail')
     window.history.replaceState(null, '', url)
     if (user.value) {
       const connected = callback === 'connected'
-      await openGoogle(connected ? '' : 'Google не подключён. Проверьте разрешения и попробуйте ещё раз.')
+      await openGoogle(connected ? '' : detail || 'Google не подключён. Проверьте разрешения и попробуйте ещё раз.')
     }
   }
 })
@@ -254,7 +256,7 @@ async function googleAction(action, payload) {
   message.value = ''
   try {
     const result = await request('/google/' + action, 'POST', payload)
-    if (action === 'connect') {
+    if (action === 'connect' || action === 'tasks-mcp/connect') {
       window.location.assign(result.url)
     } else if (action === 'disconnect') {
       await openGoogle('Аккаунт Google отключён.')
@@ -347,7 +349,10 @@ async function googleAction(action, payload) {
         <p v-if="google && !google.configured">Администратор ещё не настроил Google OAuth.</p>
         <template v-else-if="google?.connected">
           <p>Основной календарь Google и все списки Google Tasks.</p>
-          <p>У задач передаются название, описание, дата и отметка выполнения. Точное время остаётся в «Импульсе»: Google Tasks передаёт только дату.</p>
+          <p v-if="google.tasks_mcp_connected">У задач передаются название, описание, день и время выполнения, дата дедлайна и отметка выполнения. Точное время дедлайна сохраняется в «Импульсе».</p>
+          <p v-else>У задач передаются название, описание, дата и отметка выполнения. Подключите Tasks MCP, чтобы синхронизировать также время выполнения и дату дедлайна.</p>
+          <button v-if="google.tasks_mcp_configured" :disabled="syncBusy" @click="googleAction('tasks-mcp/connect')">{{ google.tasks_mcp_connected ? 'Переподключить Tasks MCP' : 'Подключить Tasks MCP' }}</button>
+          <p v-if="google.tasks_mcp_connected && !google.tasks_mcp_migrated">Tasks MCP подключён. При следующем обмене сопоставим существующие задачи.</p>
           <label class="google-auto-switch"><input type="checkbox" :checked="google.auto_sync" :disabled="syncBusy" @change="toggleGoogleAuto($event.target.checked)"><span>Автоматическая синхронизация<small>Создание, изменения и удаления в обе стороны. Работает в фоне, даже когда приложение закрыто.</small></span></label>
           <div class="google-sync-state" role="status">
             <strong>{{ google.auto_sync ? 'Обмениваемся автоматически, примерно раз в минуту' : 'Автосинхронизация приостановлена' }}</strong>
@@ -362,7 +367,7 @@ async function googleAction(action, payload) {
             <article v-for="item in googleConflicts" :key="item.kind+item.local_id">
               <strong>{{ item.local?.title || item.remote?.title || 'Удалённая запись' }}</strong>
               <div v-for="[source, label, version] in [['local','Импульс',item.local],['remote','Google',item.remote]]" :key="source" class="google-conflict-version">
-                <span>{{ label }}: {{ version ? version.title : 'Запись удалена' }}<small v-if="version?.start">{{ googleSyncTime(version.start) }} — {{ googleSyncTime(version.end) }}</small><small v-if="item.kind==='todo' && version">{{ version.completed ? 'Выполнена' : 'Не выполнена' }} · {{ googleTaskDate(version.scheduled_date) }}</small></span>
+                <span>{{ label }}: {{ version ? version.title : 'Запись удалена' }}<small v-if="version?.start">{{ googleSyncTime(version.start) }} — {{ googleSyncTime(version.end) }}</small><small v-if="item.kind==='todo' && version">{{ version.completed ? 'Выполнена' : 'Не выполнена' }} · {{ version.scheduled_at ? googleSyncTime(version.scheduled_at) : googleTaskDate(version.scheduled_date) }}</small><small v-if="version?.deadline_date">Дедлайн: {{ googleTaskDate(version.deadline_date) }}</small></span>
                 <button :disabled="syncBusy" @click="resolveGoogleConflict(item,source)">{{ version ? 'Оставить эту версию' : 'Подтвердить удаление' }}</button>
               </div>
             </article>

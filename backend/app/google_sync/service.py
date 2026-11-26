@@ -24,6 +24,7 @@ from app.todos.dao import TodoDAO
 from app.todos.models import Todo
 from app.todos.schemas import TodoInput
 from app.recurrences.models import RecurrenceException
+from app.google_sync import tasks_mcp
 
 EVENTS = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
 TODOS = 'https://tasks.googleapis.com/tasks/v1/lists/@default/tasks'
@@ -105,7 +106,7 @@ def event_export(row, db):
 def local_modified(db, link, row, kind):
     if row is None:
         return True
-    encode = event_snapshot if kind=='event' else todo_data
+    encode = event_snapshot if kind=='event' else tasks_mcp.snapshot if kind==tasks_mcp.KIND else todo_data
     if fingerprint(encode(row)) != link.fingerprint:
         return True
     return bool(kind=='event' and link.export_fingerprint and
@@ -208,9 +209,20 @@ def google_time(point):
 
 
 def incoming(remote, kind):
-    if kind == 'todo':
+    if kind in {'todo', tasks_mcp.KIND}:
         if remote.get('deleted'):
             raise ValueError
+        if remote.get('__mcp'):
+            day = remote.get('scheduledDate') or None
+            clock = remote.get('scheduledTime')
+            zone = remote.get('timeZone') or 'UTC'
+            point = datetime.combine(date.fromisoformat(day), time.fromisoformat(clock), ZoneInfo(zone)) if day and clock else None
+            if point and point.utcoffset() is None:
+                raise ValueError
+            return TodoInput(title=(remote.get('title') or '').strip()[:200] or 'Задача Google',
+                             description=(remote.get('description') or '')[:5000],
+                             completed=bool(remote.get('completed')), scheduled_date=day,
+                             scheduled_at=point, deadline_date=remote.get('deadlineDate') or None, timezone=zone)
         due = remote.get('due')
         scheduled_date = datetime.fromisoformat(due.replace('Z', '+00:00')).date() if due else None
         return TodoInput(title=(remote.get('title') or '').strip()[:200],
@@ -253,6 +265,10 @@ def event_snapshot(row):
 
 def remote_key(remote):
     key = remote.get('id')
+    if remote.get('__mcp'):
+        if not isinstance(key, str) or not 0 < len(key) <= 1024 or any(ord(char) < 32 for char in key):
+            raise ValueError
+        return key
     if not isinstance(key, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,1024}', key):
         raise ValueError
     return key
@@ -275,7 +291,7 @@ def pull_record(db, remote, kind, subject, links, dao, summary, calendar_zone='U
                 summary['changed'] += 1
             return row
         data = incoming(remote, kind)
-        if link and kind == 'todo':
+        if link and kind in {'todo', tasks_mcp.KIND}:
             row = db.scalar(select(Todo).where(Todo.id == link.local_id).with_for_update())
         if kind == 'todo' and row is not None:
             data.timezone = row.timezone
@@ -285,7 +301,10 @@ def pull_record(db, remote, kind, subject, links, dao, summary, calendar_zone='U
             data.deadline_at = row.deadline_at
             if row.scheduled_date == data.scheduled_date:
                 data.scheduled_at = row.scheduled_at
-        encode = event_snapshot if kind == 'event' else todo_data
+        elif kind == tasks_mcp.KIND and row is not None and row.deadline_date == data.deadline_date:
+            # Google has a date-only deadline; retain our independent precise time.
+            data.deadline_at = row.deadline_at
+        encode = event_snapshot if kind == 'event' else tasks_mcp.snapshot if kind == tasks_mcp.KIND else todo_data
         if link and local_modified(db,link,row,kind):
             link.conflict = {'remote':remote,'calendar_zone':calendar_zone}
             summary['conflicts'] += 1
@@ -428,6 +447,8 @@ def pull_calendar(db, client, subject, links, summary):
 
 
 def pull(db, client, connection, kind, summary):
+    if kind == 'todo' and connection.mcp_refresh_token:
+        return tasks_mcp.pull(db, client, connection, summary)
     all_links = list(db.scalars(select(GoogleLink).where(
         GoogleLink.subject == connection.subject, GoogleLink.kind == kind)))
     if kind == 'event':
@@ -467,6 +488,8 @@ def pull(db, client, connection, kind, summary):
 
 
 def push(db, client, connection, kind, summary):
+    if kind == 'todo' and connection.mcp_refresh_token:
+        return tasks_mcp.push(db, client, connection, summary)
     endpoint, dao = (EVENTS,TaskDAO(db)) if kind=='event' else (TODOS,TodoDAO(db))
     encode = event_snapshot if kind=='event' else todo_data
     links = {item.local_id:item for item in db.scalars(select(GoogleLink).where(
@@ -548,7 +571,8 @@ def run_sync(db, direction, kind):
         raise HTTPException(409, 'Сначала подключите аккаунт Google.')
     summary = {'changed': 0, 'skipped': 0, 'conflicts': 0, 'partial': False}
     with httpx.Client(timeout=httpx.Timeout(5, connect=3), trust_env=False) as client:
-        client.headers['Authorization'] = 'Bearer ' + refresh_access(client, connection)
+        provider = 'tasks_mcp' if kind == 'todo' and connection.mcp_refresh_token else 'google'
+        client.headers['Authorization'] = 'Bearer ' + refresh_access(client, connection, provider=provider)
         operation = pull if direction == 'pull' else push
         operation(db, client, connection, kind, summary)
     return summary
@@ -574,23 +598,35 @@ def automatic_sync(db):
         if connection is None or not connection.sync_enabled:
             return None
         summary={'changed':0,'skipped':0,'conflicts':0,'partial':False}
+        mcp_error = None
         with httpx.Client(timeout=httpx.Timeout(5,connect=3),trust_env=False) as client:
-            client.headers['Authorization']='Bearer '+refresh_access(client,connection)
             for kind in ('event','todo'):
-                pull(db,client,connection,kind,summary)
-                calendar_lock(db)
-                current=db.scalar(select(GoogleConnection).with_for_update())
-                if current is None or not current.sync_enabled or current.subject!=connection.subject:
-                    return summary
-                push(db,client,current,kind,summary)
+                provider = 'tasks_mcp' if kind == 'todo' and connection.mcp_refresh_token else 'google'
+                try:
+                    client.headers['Authorization']='Bearer '+refresh_access(client,connection,provider=provider)
+                    pull(db,client,connection,kind,summary)
+                    calendar_lock(db)
+                    current=db.scalar(select(GoogleConnection).with_for_update())
+                    if current is None or not current.sync_enabled or current.subject!=connection.subject:
+                        return summary
+                    push(db,client,current,kind,summary)
+                except HTTPException as error:
+                    if provider != 'tasks_mcp':
+                        raise
+                    db.rollback()
+                    mcp_error = str(error.detail)
+                    summary['partial'] = True
+                    break
         connection=db.scalar(select(GoogleConnection).with_for_update())
         if connection:
             connection.last_synced_at=datetime.now(timezone.utc)
             connection.next_sync_at=datetime.now(timezone.utc)+timedelta(seconds=20 if summary['partial'] else 60)
-            connection.sync_error=None
+            connection.sync_error=mcp_error
             connection.sync_partial=summary['partial']
             connection.sync_conflicts=len(db.scalars(select(GoogleLink).where(
-                GoogleLink.subject==connection.subject,GoogleLink.conflict.is_not(None))).all())
+                GoogleLink.subject==connection.subject,
+                GoogleLink.kind.in_(['event', tasks_mcp.KIND if connection.mcp_refresh_token else 'todo']),
+                GoogleLink.conflict.is_not(None))).all())
             db.commit()
         return summary
 
@@ -599,13 +635,17 @@ def conflict_records(db):
     connection=db.scalar(select(GoogleConnection))
     if connection is None:return []
     result=[]
-    for link in db.scalars(select(GoogleLink).where(GoogleLink.subject==connection.subject,GoogleLink.conflict.is_not(None))):
+    for link in db.scalars(select(GoogleLink).where(GoogleLink.subject==connection.subject,
+            GoogleLink.kind.in_(['event', tasks_mcp.KIND if connection.mcp_refresh_token else 'todo']),
+            GoogleLink.conflict.is_not(None))):
         dao=TaskDAO(db) if link.kind=='event' else TodoDAO(db)
         row=dao.get(link.local_id)
         local={'title':row.title} if row else None
         if row and link.kind=='event':local.update(start=row.start.isoformat(),end=row.end.isoformat())
         elif row:
-            local.update(completed=row.completed, scheduled_date=row.scheduled_date.isoformat() if row.scheduled_date else None)
+            local.update(completed=row.completed, scheduled_date=row.scheduled_date.isoformat() if row.scheduled_date else None,
+                         scheduled_at=row.scheduled_at.isoformat() if row.scheduled_at else None,
+                         deadline_date=row.deadline_date.isoformat() if row.deadline_date else None)
         if row and link.kind=='todo':local['completed']=row.completed
         raw=link.conflict.get('remote')
         remote=None
@@ -619,9 +659,11 @@ def conflict_records(db):
                 try:
                     data=incoming(raw,'todo')
                     remote['scheduled_date']=data.scheduled_date.isoformat() if data.scheduled_date else None
+                    remote['scheduled_at']=data.scheduled_at.isoformat() if data.scheduled_at else None
+                    remote['deadline_date']=data.deadline_date.isoformat() if data.deadline_date else None
                 except (ValueError,TypeError,AttributeError):
                     remote['scheduled_date']=None
-        result.append({'local_id':str(link.local_id),'kind':link.kind,'local':local,'remote':remote})
+        result.append({'local_id':str(link.local_id),'kind':'todo' if link.kind==tasks_mcp.KIND else link.kind,'local':local,'remote':remote})
     return result
 
 
@@ -634,6 +676,8 @@ def resolve_conflict(db,kind,local_id,source):
         calendar_lock(db)
         connection=db.scalar(select(GoogleConnection).with_for_update())
         if connection is None:raise HTTPException(409,'Подключите аккаунт Google.')
+        if kind == 'todo' and connection.mcp_refresh_token:
+            return resolve_mcp_conflict(db, connection, local_id, source)
         link=db.scalar(select(GoogleLink).where(GoogleLink.subject==connection.subject,GoogleLink.kind==kind,GoogleLink.local_id==local_id).with_for_update())
         if link is None or not link.conflict:raise HTTPException(409,'Конфликт уже разрешён. Обновите список.')
         endpoint,dao=(EVENTS,TaskDAO(db)) if kind=='event' else (todo_endpoint(link.task_list_id),TodoDAO(db))
@@ -681,3 +725,19 @@ def resolve_conflict(db,kind,local_id,source):
         connection.next_sync_at=datetime.now(timezone.utc)
         db.commit()
         return {'note':'Выбранная версия сохранена.'}
+
+
+def resolve_mcp_conflict(db, connection, local_id, source):
+    link = db.scalar(select(GoogleLink).where(GoogleLink.subject == connection.subject,
+                     GoogleLink.kind == tasks_mcp.KIND, GoogleLink.local_id == local_id).with_for_update())
+    if link is None or not link.conflict:
+        raise HTTPException(409, 'Конфликт уже разрешён. Обновите список.')
+    row = TodoDAO(db).get(local_id)
+    with httpx.Client(timeout=8, trust_env=False) as client:
+        client.headers['Authorization'] = 'Bearer ' + refresh_access(client, connection, provider='tasks_mcp')
+        tasks_mcp.resolve(db, client, connection, link, row, source)
+    db.flush()
+    connection.sync_conflicts = len(conflict_records(db))
+    connection.next_sync_at = datetime.now(timezone.utc)
+    db.commit()
+    return {'note': 'Выбранная версия сохранена.'}

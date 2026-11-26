@@ -13,6 +13,8 @@ class GoogleConnection(Owned, Base):
     owner_id: Mapped[UUID] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), primary_key=True)
     subject: Mapped[str] = mapped_column(String(255))
     refresh_token: Mapped[str] = mapped_column(Text)
+    mcp_refresh_token: Mapped[str | None] = mapped_column(Text)
+    mcp_migrated: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     sync_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     next_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -27,6 +29,7 @@ class GoogleState(Owned, Base):
     state: Mapped[str] = mapped_column(String(64))
     session_digest: Mapped[str] = mapped_column(String(64))
     verifier: Mapped[str] = mapped_column(String(128))
+    provider: Mapped[str] = mapped_column(String(16), default='google', server_default='google')
     expires: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
