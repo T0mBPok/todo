@@ -24,6 +24,7 @@ def mcp_exchange(exchange, monkeypatch):
     google.mcp_subject = 'mock-google'
     google.mcp_status = 200
     google.mcp_sse = False
+    google.mcp_tool_error = None
     original = Google.__call__
 
     def request(self, request):
@@ -43,6 +44,9 @@ def mcp_exchange(exchange, monkeypatch):
             return httpx.Response(self.mcp_status)
         value = json.loads(request.content)
         name, args = value['params']['name'], value['params']['arguments']
+        if self.mcp_tool_error:
+            return httpx.Response(200, json={'jsonrpc': '2.0', 'id': 1, 'result': {
+                'isError': True, 'content': [{'type': 'text', 'text': self.mcp_tool_error}]}})
         if name == 'list_tasks':
             assert args['filter']['state'] == 'ALL'
             data = {'tasks': deepcopy(list(self.mcp.values()))}
@@ -105,6 +109,26 @@ def test_rejected_mcp_access_does_not_switch_existing_sync(mcp_exchange):
     assert 'google=error' in connect().headers['location']
     assert not alice.get('/api/google/status').json()['tasks_mcp_connected']
     assert run()['conflicts'] == 0
+
+
+def test_preview_gate_explains_project_enrollment_and_preserves_rest_sync(mcp_exchange):
+    alice, bob, google, owner, run, connect = mcp_exchange
+    google.mcp_tool_error = ('Access to this tool requires that your Google Cloud project (123456789012) '
+                            'is enrolled in the Google Workspace Developer Preview Program. '
+                            'Please see https://developers.google.com/workspace/preview')
+    response = connect()
+    params = parse_qs(urlsplit(response.headers['location']).query)
+    assert params['google'] == ['error']
+    assert 'проект 123456789012' in params['detail'][0]
+    assert 'Developer Preview Program' in params['detail'][0]
+    assert 'developers.google.com/workspace/preview' in params['detail'][0]
+    assert not alice.get('/api/google/status').json()['tasks_mcp_connected']
+    assert run()['conflicts'] == 0
+
+
+def test_unknown_mcp_error_does_not_expose_external_payloads():
+    message = tasks_mcp.tool_error({'content': [{'type': 'text', 'text': 'sensitive-external-payload'}]})
+    assert 'sensitive-external-payload' not in message
 
 
 def test_mcp_dates_time_deadline_roundtrip_completion_and_deletion(mcp_exchange):

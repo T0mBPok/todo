@@ -1,5 +1,6 @@
 """Google Tasks MCP transport and sync; calendar continues using its own OAuth grant."""
 import json
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from time import monotonic
@@ -16,6 +17,20 @@ from app.todos.dao import TodoDAO
 
 ENDPOINT = 'https://tasksmcp.googleapis.com/mcp/v1'
 KIND = 'todo_mcp'
+
+
+def tool_error(result):
+    # Recognize Google's access gate without echoing arbitrary tool payloads,
+    # task contents or external error details into logs or the callback URL.
+    texts = '\n'.join(item.get('text', '') for item in result.get('content', [])
+                      if isinstance(item, dict) and item.get('type') == 'text' and isinstance(item.get('text'), str))
+    if 'enrolled in the Google Workspace Developer Preview Program' in texts:
+        match = re.search(r'Google Cloud project\s*\((\d{1,20})\)', texts)
+        project = ' ' + match[1] if match else ''
+        return ('Google требует зарегистрировать проект' + project + ' в Google Workspace Developer Preview Program. '
+                'Включения Tasks MCP API недостаточно. Подайте заявку на developers.google.com/workspace/preview '
+                'и после подтверждения Google подключите Tasks MCP снова. Прежняя синхронизация продолжает работать.')
+    return 'Google Tasks MCP не выполнил действие. Обновите список и повторите обмен.'
 
 
 def call(client, name, arguments):
@@ -39,7 +54,7 @@ def call(client, name, arguments):
             raise ValueError
         result = envelope['result']
         if result.get('isError'):
-            raise HTTPException(502, 'Google Tasks MCP не выполнил действие. Обновите список и повторите обмен.')
+            raise HTTPException(502, tool_error(result))
         structured = result.get('structuredContent')
         if isinstance(structured, dict):
             return structured
