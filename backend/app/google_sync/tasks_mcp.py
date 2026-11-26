@@ -27,9 +27,11 @@ def tool_error(result):
     if 'enrolled in the Google Workspace Developer Preview Program' in texts:
         match = re.search(r'Google Cloud project\s*\((\d{1,20})\)', texts)
         project = ' ' + match[1] if match else ''
-        return ('Google требует зарегистрировать проект' + project + ' в Google Workspace Developer Preview Program. '
-                'Включения Tasks MCP API недостаточно. Подайте заявку на developers.google.com/workspace/preview '
-                'и после подтверждения Google подключите Tasks MCP снова. Прежняя синхронизация продолжает работать.')
+        return ('Google пока отклоняет доступ Tasks MCP для проекта' + project + ', возвращая ограничение Developer Preview Program. '
+                'Tasks MCP объявлен общедоступным 24 ноября 2026 года, но запуск может занимать до 10 дней. '
+                'Возможна задержка запуска для аккаунта; повторите подключение позже. '
+                'Этот ответ сам по себе не означает, что нужно покупать Google Workspace или домен. '
+                'Прежняя синхронизация продолжает работать.')
     return 'Google Tasks MCP не выполнил действие. Обновите список и повторите обмен.'
 
 

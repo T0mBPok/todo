@@ -111,7 +111,7 @@ def test_rejected_mcp_access_does_not_switch_existing_sync(mcp_exchange):
     assert run()['conflicts'] == 0
 
 
-def test_preview_gate_explains_project_enrollment_and_preserves_rest_sync(mcp_exchange):
+def test_preview_gate_explains_rollout_and_preserves_rest_sync(mcp_exchange):
     alice, bob, google, owner, run, connect = mcp_exchange
     google.mcp_tool_error = ('Access to this tool requires that your Google Cloud project (123456789012) '
                             'is enrolled in the Google Workspace Developer Preview Program. '
@@ -119,9 +119,11 @@ def test_preview_gate_explains_project_enrollment_and_preserves_rest_sync(mcp_ex
     response = connect()
     params = parse_qs(urlsplit(response.headers['location']).query)
     assert params['google'] == ['error']
-    assert 'проект 123456789012' in params['detail'][0]
+    assert 'проекта 123456789012' in params['detail'][0]
     assert 'Developer Preview Program' in params['detail'][0]
-    assert 'developers.google.com/workspace/preview' in params['detail'][0]
+    assert 'до 10 дней' in params['detail'][0]
+    assert 'не означает, что нужно покупать' in params['detail'][0]
+    assert 'Подайте заявку' not in params['detail'][0]
     assert not alice.get('/api/google/status').json()['tasks_mcp_connected']
     assert run()['conflicts'] == 0
 
